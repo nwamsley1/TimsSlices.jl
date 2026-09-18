@@ -113,6 +113,14 @@ if BIG
     end
 end
 
+@testset "worker errors propagate" begin
+    # a parameter set that makes every frame fail must raise, not hang (regression: the ordered writer waited forever)
+    bad = ConvertParams(frames = collect(1:30), zstd_level = 3)
+    err_dir = mktempdir()
+    @test_throws Exception TimsSlices.convert(HELA, err_dir; params = bad, name = "err", log = devnull, _fail_frames = true)
+    rm(err_dir; recursive = true)
+end
+
 @testset "container round trip (HeLa, 120 frames)" begin
     out_dir = mktempdir()
     p = ConvertParams(format = :both, frames = collect(1:120), bin_scale = 2, int_scale = 16, cull_q = 0.01, ms1_cull_q = 0.0)

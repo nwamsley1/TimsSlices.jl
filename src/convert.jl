@@ -74,7 +74,7 @@ end
 Convert a `.d` bundle. Returns the paths written (`nothing` for a format not requested).
 """
 function convert(dir::AbstractString, out_dir::AbstractString; params::ConvertParams = ConvertParams(),
-                 name::AbstractString = output_name(dir, params), log::IO = stdout)
+                 name::AbstractString = output_name(dir, params), log::IO = stdout, _fail_frames::Bool = false)
     p = validate(params)
     t_start = time()
     f = open_tdf(dir)
@@ -114,10 +114,17 @@ function convert(dir::AbstractString, out_dir::AbstractString; params::ConvertPa
     results = Channel{FrameResult}(inflight)
     worker_tasks = [Threads.@spawn begin
         wk = workers[t]
-        while true
-            q = Threads.atomic_add!(next, 1)
-            q > n_rows && break
-            put!(results, process_frame!(wk, f, rows[q], ls1, ls2, p, want_arrow, q))
+        try
+            while true
+                q = Threads.atomic_add!(next, 1)
+                q > n_rows && break
+                _fail_frames && error("injected failure (test)")
+                put!(results, process_frame!(wk, f, rows[q], ls1, ls2, p, want_arrow, q))
+            end
+        catch e
+            # a failed worker must not leave the writer waiting forever: close the channel with the error
+            isopen(results) && close(results, ErrorException("worker failed on frame row $(rows[min(Threads.atomic_add!(next, 0) - 1, n_rows)]): $(sprint(showerror, e))"))
+            rethrow()
         end
     end for t in 1:nt]
     done = 0; t_loop = time(); n_slices_tot = 0; n_peaks_tot = Int[0, 0]
@@ -127,7 +134,7 @@ function convert(dir::AbstractString, out_dir::AbstractString; params::ConvertPa
         r = try
             take!(results)
         catch e
-            # a worker failure closes nothing by itself; surface the first worker error
+            # the channel was closed by a failing worker: surface that worker's exception
             for t in worker_tasks; istaskfailed(t) && wait(t); end
             rethrow(e)
         end

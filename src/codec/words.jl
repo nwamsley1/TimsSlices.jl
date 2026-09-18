@@ -54,7 +54,7 @@ slice_range(b::SliceBlock, j::Integer) = (b.ptr[j]):(b.ptr[j + 1] - 1)
 """
     quantize!(blk, fs, bin_scale, int_scale) -> blk
 
-Round bin positions to `round(bin_scale * pos)` and intensities to `round(int_scale * val)`, merging peaks that
+Round bin positions to `round(bin_scale * max(pos, 0))` and intensities to `round(int_scale * val)`, merging peaks that
 land on the same fixed-point bin (intensities summed) and dropping peaks whose rounded intensity is 0.
 Slices keep their identity (a slice may become empty). Peaks within a slice must be sorted by position.
 """
@@ -67,7 +67,7 @@ function quantize!(blk::SliceBlock, fs::FrameSlices, bin_scale::Integer, int_sca
         blk.ptr[j] = Int32(length(blk.bin) + 1)
         last_bin = typemax(UInt32); acc = UInt64(0)
         for k in fs.ptr[j]:fs.ptr[j + 1] - 1
-            b = round(UInt32, bin_scale * fs.pos[k])
+            b = round(UInt32, max(0.0, bin_scale * fs.pos[k]))   # a footprint can reach below bin 0 at the range edge
             v = UInt64(round(Int, int_scale * fs.val[k]))
             b < last_bin && last_bin != typemax(UInt32) && throw(ArgumentError("slice $j peaks not sorted by position"))
             if b == last_bin

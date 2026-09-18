@@ -113,6 +113,12 @@ end
     fs2 = FrameSlices(); TS.push_peak!(fs2, 1.0, 0.1); TS.end_slice!(fs2, 0, 1); TS.push_peak!(fs2, 2.0, 1.0); TS.end_slice!(fs2, 8, 1)
     quantize!(blk, fs2, 1, 1.0)
     @test blk.n_slices == 2 && blk.ptr == Int32[1, 1, 2]
+    # a slightly negative position (footprint below bin 0 at the range edge) clamps to bin 0
+    fs4 = FrameSlices(); TS.push_peak!(fs4, -0.05, 3.0); TS.push_peak!(fs4, 0.6, 4.0); TS.end_slice!(fs4, 0, 1)
+    quantize!(blk, fs4, 256, 1.0)
+    @test blk.bin == UInt32[0, 154] && blk.intensity == UInt32[3, 4]
+    quantize!(blk, fs4, 1, 1.0)
+    @test blk.bin == UInt32[0, 1]
     # unsorted input raises
     fs3 = FrameSlices(); TS.push_peak!(fs3, 5.0, 1.0); TS.push_peak!(fs3, 4.0, 1.0); TS.end_slice!(fs3, 0, 1)
     @test_throws ArgumentError quantize!(blk, fs3, 1, 1.0)
