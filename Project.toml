@@ -1,0 +1,26 @@
+name = "TimsSlices"
+uuid = "7d3f1c2a-5b8e-4f61-9c0d-2a6e8b4f1d37"
+version = "0.1.0"
+authors = ["Nathan Wamsley"]
+
+[deps]
+Arrow = "69666777-d1a9-59fb-9406-91d4454c9d45"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+Mmap = "a63ad114-7e13-5084-954f-fe012c677804"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+SQLite = "0aa819cd-b072-5ff4-a722-6bc24af294d9"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+Zstd_jll = "3161d3a3-bdf6-5164-811a-617609db77b4"
+
+[compat]
+Printf = "1.11.0"
+julia = "1.10"
+
+[extras]
+CodecZstd = "6b39b394-51ab-5f42-8807-6242bab2b4c2"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["CodecZstd", "DataFrames", "Random", "Test"]

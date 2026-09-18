@@ -1,0 +1,9 @@
+[deps]
+Arrow = "69666777-d1a9-59fb-9406-91d4454c9d45"
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+CodecZstd = "6b39b394-51ab-5f42-8807-6242bab2b4c2"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+SQLite = "0aa819cd-b072-5ff4-a722-6bc24af294d9"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+TimsSlices = "7d3f1c2a-5b8e-4f61-9c0d-2a6e8b4f1d37"
