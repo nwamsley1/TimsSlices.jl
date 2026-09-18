@@ -137,6 +137,14 @@ end
         @test TS.n_peaks(blk) == t.frames.n_peaks[i]
         r = t.frames.first_slice[i]:t.frames.first_slice[i] + t.frames.n_slices[i] - 1
         @test all(j -> t.slices.n_peaks[r[j]] == length(TS.slice_range(blk, j)) && t.slices.peak_offset[r[j]] == blk.ptr[j], 1:blk.n_slices)
+        # slice blocks tile the frame's span of blocks.bin and decode individually to the same peaks
+        @test t.slices.block_offset[r[1]] == t.frames.block_offset[i] && sum(t.slices.block_size[r]) == t.frames.block_size[i]
+        @test all(j -> t.slices.block_offset[r[j]] + t.slices.block_size[r[j]] == (j < length(r) ? t.slices.block_offset[r[j + 1]] : t.frames.block_offset[i] + t.frames.block_size[i]), 1:length(r))
+        sb = SliceBuffer()
+        for j in (1, length(r) ÷ 2 + 1, length(r))
+            read_slice!(sb, codec, t, r[j]); rr = TS.slice_range(blk, j)
+            @test sb.n_peaks == length(rr) && sb.bin[1:sb.n_peaks] == blk.bin[rr] && sb.intensity[1:sb.n_peaks] == blk.intensity[rr]
+        end
         @test all(j -> t.slices.tic[r[j]] == Float32(sum(blk.intensity[TS.slice_range(blk, j)]) / t.int_scale), 1:blk.n_slices)
         @test all(==(i), view(t.slices.frame_row, r))
     end

@@ -1,8 +1,8 @@
-# The .tdfs container: blocks.bin (u32 block_size, u32 n_words, zstd payload per frame), frames.arrow,
-# slices.arrow, meta.json. See docs/format.md.
+# The .tdfs container: blocks.bin (one zstd block per slice, a frame's slices contiguous), frames.arrow,
+# slices.arrow (with each slice's block offset and size), meta.json. See docs/format.md.
 using Arrow, JSON3, Mmap
 
-const TDFS_FORMAT_VERSION = 1
+const TDFS_FORMAT_VERSION = 2
 
 "Per-frame metadata carried from the .d (or the tdfs) to the writers."
 struct FrameMeta
@@ -26,8 +26,9 @@ mutable struct SliceRows
     tic::Vector{Float32}
     n_peaks::Vector{Int32}
     peak_offset::Vector{Int64}         # 1-based start of the slice's peaks in the frame's peak arrays
+    block_size::Vector{Int32}          # compressed bytes of the slice's block (0 for an empty slice)
 end
-SliceRows() = SliceRows(UInt16[], Int32[], Float32[], Float32[], Float32[], Float32[], Float32[], Float32[], Int32[], Int64[])
+SliceRows() = SliceRows(UInt16[], Int32[], Float32[], Float32[], Float32[], Float32[], Float32[], Float32[], Int32[], Int64[], Int32[])
 Base.length(r::SliceRows) = length(r.im_scan)
 function Base.empty!(r::SliceRows)
     for n in fieldnames(SliceRows); empty!(getfield(r, n)); end
@@ -57,6 +58,7 @@ function slice_rows!(rows::SliceRows, fm::FrameMeta, blk::SliceBlock, scan::Vect
         push!(rows.center_mz, ms1 ? NaN32 : w.center); push!(rows.isolation_width, ms1 ? NaN32 : w.width)
         push!(rows.collision_energy_ev, ms1 ? 0f0 : Float32(ce_at(ce, s))); push!(rows.window_ce, ms1 ? NaN32 : w.ce)
         push!(rows.tic, Float32(tic / int_scale)); push!(rows.n_peaks, Int32(length(r))); push!(rows.peak_offset, Int64(first(r)))
+        push!(rows.block_size, Int32(0))
     end
     rows
 end
@@ -70,10 +72,10 @@ mutable struct TdfsWriter
     # frames.arrow columns
     f_frame_id::Vector{Int32}; f_ms_order::Vector{UInt8}; f_cycle_idx::Vector{Int32}; f_window_group::Vector{UInt8}
     f_rt_s::Vector{Float64}; f_n_scans::Vector{Int32}; f_n_slices::Vector{Int32}; f_n_peaks::Vector{Int64}
-    f_block_offset::Vector{Int64}; f_block_size::Vector{Int64}; f_n_words::Vector{Int64}; f_first_slice::Vector{Int64}
+    f_block_offset::Vector{Int64}; f_block_size::Vector{Int64}; f_first_slice::Vector{Int64}
     # slices.arrow columns
     s_frame_row::Vector{Int32}; s_slice_in_frame::Vector{Int32}; s_ms_order::Vector{UInt8}; s_cycle_idx::Vector{Int32}
-    s_window_group::Vector{UInt8}; s_frame_id::Vector{Int32}
+    s_window_group::Vector{UInt8}; s_frame_id::Vector{Int32}; s_block_offset::Vector{Int64}
     s_rows::SliceRows
     meta::Dict{String, Any}
 end
@@ -82,26 +84,33 @@ function TdfsWriter(dir::AbstractString, meta::Dict{String, Any})
     mkpath(dir)
     io = open(joinpath(dir, "blocks.bin"), "w")
     TdfsWriter(String(dir), io, 0, 0,
-               Int32[], UInt8[], Int32[], UInt8[], Float64[], Int32[], Int32[], Int64[], Int64[], Int64[], Int64[], Int64[],
-               Int32[], Int32[], UInt8[], Int32[], UInt8[], Int32[], SliceRows(), meta)
+               Int32[], UInt8[], Int32[], UInt8[], Float64[], Int32[], Int32[], Int64[], Int64[], Int64[], Int64[],
+               Int32[], Int32[], UInt8[], Int32[], UInt8[], Int32[], Int64[], SliceRows(), meta)
 end
 
-"Append one frame: its compressed block bytes, its slice rows, its frame row. Frames must arrive in order."
-function write_frame!(w::TdfsWriter, fm::FrameMeta, rows::SliceRows, n_peaks::Integer, zbytes::AbstractVector{UInt8}, n_words::Integer)
+"""
+    write_frame!(w, fm, rows, n_peaks, zbytes)
+
+Append one frame: the concatenation of its slices' compressed blocks (`zbytes`, sizes in `rows.block_size`), its
+slice rows, its frame row. Frames must arrive in order.
+"""
+function write_frame!(w::TdfsWriter, fm::FrameMeta, rows::SliceRows, n_peaks::Integer, zbytes::AbstractVector{UInt8})
     fm.ms_order == 0x01 && (w.cycle += Int32(1))
-    nb = length(zbytes)
-    block_size = 8 + nb
-    write(w.blocks, UInt32(block_size)); write(w.blocks, UInt32(n_words)); write(w.blocks, zbytes)
+    total = sum(rows.block_size; init = Int32(0))
+    Int(total) == length(zbytes) || error("frame $(fm.frame_id): slice block sizes sum to $total, got $(length(zbytes)) bytes")
+    write(w.blocks, zbytes)
     frow = Int32(length(w.f_frame_id) + 1)
     push!(w.f_frame_id, fm.frame_id); push!(w.f_ms_order, fm.ms_order); push!(w.f_cycle_idx, w.cycle); push!(w.f_window_group, fm.window_group)
     push!(w.f_rt_s, fm.rt_s); push!(w.f_n_scans, fm.n_scans); push!(w.f_n_slices, Int32(length(rows))); push!(w.f_n_peaks, Int64(n_peaks))
-    push!(w.f_block_offset, w.offset); push!(w.f_block_size, block_size); push!(w.f_n_words, Int64(n_words)); push!(w.f_first_slice, Int64(length(w.s_frame_row) + 1))
+    push!(w.f_block_offset, w.offset); push!(w.f_block_size, Int64(total)); push!(w.f_first_slice, Int64(length(w.s_frame_row) + 1))
+    off = w.offset
     for j in 1:length(rows)
         push!(w.s_frame_row, frow); push!(w.s_slice_in_frame, Int32(j)); push!(w.s_ms_order, fm.ms_order)
         push!(w.s_cycle_idx, w.cycle); push!(w.s_window_group, fm.window_group); push!(w.s_frame_id, fm.frame_id)
+        push!(w.s_block_offset, off); off += rows.block_size[j]
     end
     append!(w.s_rows, rows)
-    w.offset += block_size
+    w.offset += total
     w
 end
 
@@ -110,13 +119,14 @@ function Base.close(w::TdfsWriter)
     Arrow.write(joinpath(w.dir, "frames.arrow"),
         (frame_id = w.f_frame_id, ms_order = w.f_ms_order, cycle_idx = w.f_cycle_idx, window_group = w.f_window_group,
          rt_s = w.f_rt_s, n_scans = w.f_n_scans, n_slices = w.f_n_slices, n_peaks = w.f_n_peaks,
-         block_offset = w.f_block_offset, block_size = w.f_block_size, n_words = w.f_n_words, first_slice = w.f_first_slice))
+         block_offset = w.f_block_offset, block_size = w.f_block_size, first_slice = w.f_first_slice))
     r = w.s_rows
     Arrow.write(joinpath(w.dir, "slices.arrow"),
         (frame_row = w.s_frame_row, slice_in_frame = w.s_slice_in_frame, frame_id = w.s_frame_id, im_scan = r.im_scan,
          window = r.window, ms_order = w.s_ms_order, cycle_idx = w.s_cycle_idx, window_group = w.s_window_group,
          retention_time = r.retention_time, center_mz = r.center_mz, isolation_width = r.isolation_width,
-         collision_energy_ev = r.collision_energy_ev, window_ce = r.window_ce, tic = r.tic, n_peaks = r.n_peaks, peak_offset = r.peak_offset))
+         collision_energy_ev = r.collision_energy_ev, window_ce = r.window_ce, tic = r.tic, n_peaks = r.n_peaks, peak_offset = r.peak_offset,
+         block_offset = w.s_block_offset, block_size = r.block_size))
     m = copy(w.meta)
     m["format_version"] = TDFS_FORMAT_VERSION
     m["n_frames"] = length(w.f_frame_id); m["n_slices"] = length(w.s_frame_row); m["n_peaks"] = sum(w.f_n_peaks; init = 0)
@@ -153,15 +163,27 @@ end
 n_frames(t::TdfsFile) = length(t.frames.frame_id)
 n_slices(t::TdfsFile) = length(t.slices.frame_row)
 
-"Decode frame row i of a tdfs into `blk`."
+"Decode slice row s of a tdfs into `sb` (the reader's unit: one zstd block, valid on its own)."
+function read_slice!(sb::SliceBuffer, codec::BlockCodec, t::TdfsFile, s::Integer)
+    off = t.slices.block_offset[s]; bs = t.slices.block_size[s]; np = Int(t.slices.n_peaks[s])
+    off + bs <= length(t.blocks) || error("tdfs slice $s: block runs beyond blocks.bin")
+    decode_slice!(sb, codec, view(t.blocks, off + 1:off + bs), np)
+end
+
+"Decode all slices of frame row i into `blk` (for expand, tests and sequential passes)."
 function read_frame_block!(blk::SliceBlock, codec::BlockCodec, t::TdfsFile, i::Integer)
-    off = t.frames.block_offset[i]; bs = t.frames.block_size[i]
-    p = pointer(t.blocks) + off
-    hdr_size = GC.@preserve t unsafe_load(Ptr{UInt32}(p)); n_words = GC.@preserve t unsafe_load(Ptr{UInt32}(p + 4))
-    Int(hdr_size) == bs || error("tdfs frame $i: header block_size $hdr_size != frames table $bs")
-    Int(n_words) == t.frames.n_words[i] || error("tdfs frame $i: header n_words $n_words != frames table $(t.frames.n_words[i])")
-    decode_block!(blk, codec, view(t.blocks, off + 9:off + bs), Int(n_words))
-    blk.n_slices == t.frames.n_slices[i] || error("tdfs frame $i: decoded $(blk.n_slices) slices, table says $(t.frames.n_slices[i])")
+    reset!(blk)
+    ns = Int(t.frames.n_slices[i]); first = Int(t.frames.first_slice[i])
+    blk.n_slices = ns
+    resize!(blk.ptr, ns + 1)
+    sb = SliceBuffer()
+    @inbounds for j in 1:ns
+        blk.ptr[j] = Int32(length(blk.bin) + 1)
+        read_slice!(sb, codec, t, first + j - 1)
+        append!(blk.bin, view(sb.bin, 1:sb.n_peaks)); append!(blk.intensity, view(sb.intensity, 1:sb.n_peaks))
+    end
+    blk.ptr[end] = Int32(length(blk.bin) + 1)
+    length(blk.bin) == t.frames.n_peaks[i] || error("tdfs frame $i: decoded $(length(blk.bin)) peaks, table says $(t.frames.n_peaks[i])")
     blk
 end
 

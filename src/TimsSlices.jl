@@ -21,6 +21,6 @@ include("cli.jl")
 export open_tdf, FrameBuffer, read_frame!, valid_frames, windows, n_frames,
        FrameSlices, SliceBlock, BlockCodec, quantize!, encode_block!, decode_block!,
        ConvertParams, LevelParams, LevelSetup, SmoothScratch, level_params, smooth_frame!, smooth_window!, gauss_kernel,
-       convert, expand, open_tdfs, read_frame_block!, output_name, TdfsFile, n_slices
+       convert, expand, open_tdfs, read_frame_block!, read_slice!, SliceBuffer, encode_slice!, decode_slice!, output_name, TdfsFile, n_slices
 
 end

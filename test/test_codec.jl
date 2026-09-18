@@ -78,6 +78,15 @@ end
         nw, nb = encode_block!(codec, blk, 3)
         back2 = SliceBlock(); decode_block!(back2, codec, codec.zbuf[1:nb], nw)
         @test back2.ptr == blk.ptr && back2.bin == blk.bin && back2.intensity == blk.intensity
+        # per-slice blocks (the on-disk unit): each slice round-trips on its own
+        sb = SliceBuffer()
+        for j in 1:blk.n_slices
+            r = TS.slice_range(blk, j)
+            nb = encode_slice!(codec, blk, j, 3)
+            isempty(r) && @test nb == 0
+            decode_slice!(sb, codec, codec.zbuf[1:nb], length(r))
+            @test sb.n_peaks == length(r) && sb.bin[1:sb.n_peaks] == blk.bin[r] && sb.intensity[1:sb.n_peaks] == blk.intensity[r]
+        end
     end
     # empty frame
     blk = SliceBlock(); quantize!(blk, FrameSlices(), 1, 1.0)

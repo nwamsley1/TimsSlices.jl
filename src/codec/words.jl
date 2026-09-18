@@ -1,8 +1,8 @@
-# The slice word stream of one frame block (our format, see docs/format.md):
-#   word 1            n_slices
-#   words 2..n+1      peak count of slice j
-#   then per slice, per peak: (bin_delta, intensity); bin_delta is the fixed-point bin minus the previous
-#   peak's bin in the slice, the accumulator starting at 0xFFFFFFFF (so the first delta is bin + 1).
+# Word streams (our format, see docs/format.md). A slice's block is 2 * n_peaks words, (bin_delta, intensity) per
+# peak; bin_delta is the fixed-point bin minus the previous peak's bin in the slice, the accumulator starting at
+# 0xFFFFFFFF (so the first delta is bin + 1). The peak count lives in the slice table, not in the stream.
+# `SliceBlock` is the in-memory form of one frame's slices (ptr / bin / intensity); the *frame* word stream
+# (`encode_words!` / `decode_words!`: [n_slices, counts..., pairs...]) is kept for tests and in-memory round trips.
 
 "Float centroids of one frame before quantisation: per slice, (bin position, intensity) pairs."
 mutable struct FrameSlices
@@ -164,4 +164,67 @@ function decode_block!(blk::SliceBlock, c::BlockCodec, payload::AbstractVector{U
     zstd_decompress!(c.planes, c.zstd, payload, 4n_words)
     untranspose!(c.words, c.planes, n_words)
     decode_words!(blk, c.words, n_words)
+end
+
+# --- per-slice blocks (the on-disk unit of a .tdfs) -------------------------------------------------------
+
+"Delta-code slice j of `blk` into `words` (2 * n_peaks words); returns the word count."
+function encode_slice_words!(words::Vector{UInt32}, blk::SliceBlock, j::Integer)
+    r = slice_range(blk, j)
+    n = 2length(r)
+    length(words) < n && resize!(words, n)
+    acc = typemax(UInt32); pos = 1
+    @inbounds for k in r
+        b = blk.bin[k]
+        words[pos] = b - acc; words[pos + 1] = blk.intensity[k]
+        acc = b; pos += 2
+    end
+    n
+end
+
+"Inverse of `encode_slice_words!` into `bin[1:n_peaks]`, `intensity[1:n_peaks]` (resized)."
+function decode_slice_words!(bin::Vector{UInt32}, intensity::Vector{UInt32}, words::AbstractVector{UInt32}, n_peaks::Integer)
+    length(words) >= 2n_peaks || throw(ArgumentError("word stream has $(length(words)) words, need $(2n_peaks)"))
+    length(bin) < n_peaks && resize!(bin, n_peaks)
+    length(intensity) < n_peaks && resize!(intensity, n_peaks)
+    acc = typemax(UInt32); pos = 1
+    @inbounds for k in 1:n_peaks
+        acc += words[pos]; bin[k] = acc; intensity[k] = words[pos + 1]; pos += 2
+    end
+    bin, intensity
+end
+
+"""
+    encode_slice!(codec, blk, j, level) -> nbytes
+
+Slice j of `blk` -> word stream -> byte planes -> zstd into `codec.zbuf[1:nbytes]`. An empty slice gives 0 bytes.
+"""
+function encode_slice!(c::BlockCodec, blk::SliceBlock, j::Integer, level::Integer)
+    n = encode_slice_words!(c.words, blk, j)
+    n == 0 && return 0
+    transpose!(c.planes, c.words, n)
+    zstd_compress!(c.zbuf, c.zstd, c.planes, 4n, level)
+end
+
+"One decoded slice: per-thread scratch for readers."
+mutable struct SliceBuffer
+    n_peaks::Int
+    bin::Vector{UInt32}
+    intensity::Vector{UInt32}
+end
+SliceBuffer() = SliceBuffer(0, UInt32[], UInt32[])
+
+"""
+    decode_slice!(sb, codec, payload, n_peaks) -> sb
+
+zstd payload of one slice -> byte planes -> word stream -> `sb.bin[1:n_peaks]`, `sb.intensity[1:n_peaks]`.
+"""
+function decode_slice!(sb::SliceBuffer, c::BlockCodec, payload::AbstractVector{UInt8}, n_peaks::Integer)
+    sb.n_peaks = n_peaks
+    n_peaks == 0 && return sb
+    n = 2n_peaks
+    zstd_decompress!(c.planes, c.zstd, payload, 4n)
+    untranspose!(c.words, c.planes, n)
+    decode_slice_words!(sb.bin, sb.intensity, c.words, n_peaks)
+    sb
 end

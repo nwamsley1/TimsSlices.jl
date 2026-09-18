@@ -9,9 +9,10 @@ mutable struct Worker
     blk::SliceBlock
     codec::BlockCodec
     rows::SliceRows
+    zall::Vector{UInt8}                 # a frame's slice blocks, concatenated
     t_decode::Float64; t_smooth::Float64; t_encode::Float64
 end
-Worker() = Worker(FrameBuffer(), SmoothScratch(), FrameSlices(), SliceBlock(), BlockCodec(), SliceRows(), 0.0, 0.0, 0.0)
+Worker() = Worker(FrameBuffer(), SmoothScratch(), FrameSlices(), SliceBlock(), BlockCodec(), SliceRows(), UInt8[], 0.0, 0.0, 0.0)
 
 "What one frame yields for the writers (owned by the main task after the batch)."
 struct FrameResult
@@ -21,8 +22,7 @@ struct FrameResult
     rows::SliceRows
     blk::Union{Nothing, SliceBlock}     # kept only when the Arrow output needs the peaks
     n_peaks::Int
-    zbytes::Vector{UInt8}
-    n_words::Int
+    zbytes::Vector{UInt8}               # the slices' compressed blocks, concatenated (sizes in rows.block_size)
 end
 
 function frame_meta(f::TdfFile, i::Integer)
@@ -60,12 +60,17 @@ function process_frame!(wk::Worker, f::TdfFile, i::Int, ls1::LevelSetup, ls2::Le
     smooth_frame!(wk.out, wk.sc, wk.buf, f, i, ls1, ls2)
     t2 = time_ns()
     quantize!(wk.blk, wk.out, p.bin_scale, p.int_scale)
-    n_words, nb = encode_block!(wk.codec, wk.blk, p.zstd_level)
     fm = frame_meta(f, i)
     slice_rows!(wk.rows, fm, wk.blk, wk.out.scan, wk.out.window, windows(f, i), f.ce_ramp, p.int_scale)
+    empty!(wk.zall)
+    for j in 1:wk.blk.n_slices
+        nb = encode_slice!(wk.codec, wk.blk, j, p.zstd_level)
+        wk.rows.block_size[j] = Int32(nb)
+        append!(wk.zall, view(wk.codec.zbuf, 1:nb))
+    end
     t3 = time_ns()
     wk.t_decode += (t1 - t0) / 1e9; wk.t_smooth += (t2 - t1) / 1e9; wk.t_encode += (t3 - t2) / 1e9
-    FrameResult(seq, i, fm, deepcopy(wk.rows), keep_blk ? deepcopy(wk.blk) : nothing, n_peaks(wk.blk), wk.codec.zbuf[1:nb], n_words)
+    FrameResult(seq, i, fm, deepcopy(wk.rows), keep_blk ? deepcopy(wk.blk) : nothing, n_peaks(wk.blk), copy(wk.zall))
 end
 
 """
@@ -141,7 +146,7 @@ function convert(dir::AbstractString, out_dir::AbstractString; params::ConvertPa
         pending[r.seq] = r
         while haskey(pending, next_write)
             r = pop!(pending, next_write)
-            want_tdfs && write_frame!(tw, r.fm, r.rows, r.n_peaks, r.zbytes, r.n_words)
+            want_tdfs && write_frame!(tw, r.fm, r.rows, r.n_peaks, r.zbytes)
             want_arrow && write_frame!(aw, r.fm, r.rows, r.blk)
             n_slices_tot += length(r.rows); n_peaks_tot[r.fm.ms_order] += r.n_peaks
             next_write += 1; done += 1
