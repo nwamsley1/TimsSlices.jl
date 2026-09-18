@@ -43,7 +43,7 @@ end
 
 Fill `rows` for one frame from its quantised block and per-slice scan / window indices.
 """
-function slice_rows!(rows::SliceRows, fm::FrameMeta, blk::SliceBlock, scan::Vector{Int32}, window::Vector{Int32}, wins, ce::CeRamp)
+function slice_rows!(rows::SliceRows, fm::FrameMeta, blk::SliceBlock, scan::Vector{Int32}, window::Vector{Int32}, wins, ce::CeRamp, int_scale::Real = 1.0)
     empty!(rows)
     dt = fm.ramp_ms / 1000 / fm.n_scans        # seconds per scan
     ms1 = fm.ms_order == 0x01
@@ -56,7 +56,7 @@ function slice_rows!(rows::SliceRows, fm::FrameMeta, blk::SliceBlock, scan::Vect
         push!(rows.retention_time, Float32((fm.rt_s + s * dt) / 60))
         push!(rows.center_mz, ms1 ? NaN32 : w.center); push!(rows.isolation_width, ms1 ? NaN32 : w.width)
         push!(rows.collision_energy_ev, ms1 ? 0f0 : Float32(ce_at(ce, s))); push!(rows.window_ce, ms1 ? NaN32 : w.ce)
-        push!(rows.tic, Float32(tic)); push!(rows.n_peaks, Int32(length(r))); push!(rows.peak_offset, Int64(first(r)))
+        push!(rows.tic, Float32(tic / int_scale)); push!(rows.n_peaks, Int32(length(r))); push!(rows.peak_offset, Int64(first(r)))
     end
     rows
 end
@@ -167,3 +167,5 @@ end
 
 "Fixed-point bin -> m/z."
 @inline bin_to_mz(t::TdfsFile, b::UInt32) = bin_to_mz(t.mz_cal, Float64(b) / t.bin_scale)
+"Stored integer -> intensity in the converter's units (the stored value is int_scale x intensity)."
+@inline stored_to_intensity(t::TdfsFile, v::UInt32) = Float64(v) / t.int_scale

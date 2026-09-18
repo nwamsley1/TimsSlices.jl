@@ -115,11 +115,11 @@ end
 
 @testset "container round trip (HeLa, 120 frames)" begin
     out_dir = mktempdir()
-    p = ConvertParams(format = :both, frames = collect(1:120), bin_scale = 2, cull_q = 0.01, ms1_cull_q = 0.0)
+    p = ConvertParams(format = :both, frames = collect(1:120), bin_scale = 2, int_scale = 16, cull_q = 0.01, ms1_cull_q = 0.0)
     paths = TimsSlices.convert(HELA, out_dir; params = p, name = "rt", log = devnull)
     @test isdir(paths.tdfs) && isfile(paths.arrow)
     t = open_tdfs(paths.tdfs)
-    @test n_frames(t) == 120 && t.bin_scale == 2 && t.meta["params"]["cull_q"] == 0.01
+    @test n_frames(t) == 120 && t.bin_scale == 2 && t.int_scale == 16 && t.meta["params"]["cull_q"] == 0.01
     @test t.frames.ms_order[1] == 0x01 && t.frames.cycle_idx[1] == 1 && t.frames.cycle_idx[10] == 2
     # slices table consistent with frames table and blocks
     @test sum(t.frames.n_slices) == n_slices(t)
@@ -129,7 +129,7 @@ end
         @test TS.n_peaks(blk) == t.frames.n_peaks[i]
         r = t.frames.first_slice[i]:t.frames.first_slice[i] + t.frames.n_slices[i] - 1
         @test all(j -> t.slices.n_peaks[r[j]] == length(TS.slice_range(blk, j)) && t.slices.peak_offset[r[j]] == blk.ptr[j], 1:blk.n_slices)
-        @test all(j -> t.slices.tic[r[j]] == Float32(sum(blk.intensity[TS.slice_range(blk, j)])), 1:blk.n_slices)
+        @test all(j -> t.slices.tic[r[j]] == Float32(sum(blk.intensity[TS.slice_range(blk, j)]) / t.int_scale), 1:blk.n_slices)
         @test all(==(i), view(t.slices.frame_row, r))
     end
     # MS1 rows carry NaN centre / width, MS2 rows the window values
@@ -147,7 +147,8 @@ end
     @test Arrow.getmetadata(a) == Arrow.getmetadata(b)
     # the Arrow peaks are the quantised bins converted with the file's calibration
     read_frame_block!(blk, codec, t, 1)
-    @test a.mz_array[1][1] == Float32(TS.bin_to_mz(t, blk.bin[1])) && a.intensity_array[1][1] == Float32(blk.intensity[1])
+    @test a.mz_array[1][1] == Float32(TS.bin_to_mz(t, blk.bin[1])) && a.intensity_array[1][1] == Float32(TS.stored_to_intensity(t, blk.intensity[1]))
+    @test a.intensity_array[1][1] == Float32(blk.intensity[1] / 16)
     @test a.retentionTime[1] == t.slices.retention_time[1] && a.imScan[1] == t.slices.im_scan[1]
     # cull thresholds recorded and applied (MS2 quantile cull, MS1 none)
     @test t.meta["cull_thr_ms2"] > 0 && t.meta["cull_thr_ms1"] == 0

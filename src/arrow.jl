@@ -1,7 +1,7 @@
 # Pioneer's slice Arrow schema (the prototype's output), written in record batches from quantised frames.
 # Used for search-level validation and for parameter sweeps against today's numbers.
 
-const ARROW_BATCH_PEAKS = 500_000_000    # Arrow list offsets are Int32 per record batch
+const ARROW_BATCH_PEAKS = 100_000_000    # Arrow list offsets are Int32 per record batch; smaller batches bound the RAM of the pending columns
 
 mutable struct SliceArrowWriter
     path::String
@@ -10,6 +10,7 @@ mutable struct SliceArrowWriter
     hi_mz::Float32
     cal::LinearMzCal
     bin_scale::Int
+    int_scale::Float64
     scan_number::Int32
     cycle::Int32
     # pending batch
@@ -23,9 +24,9 @@ mutable struct SliceArrowWriter
     n_batches::Int
 end
 
-function SliceArrowWriter(path::AbstractString, meta::Dict{String, String}, cal::LinearMzCal, bin_scale::Integer, lo_mz::Real, hi_mz::Real)
+function SliceArrowWriter(path::AbstractString, meta::Dict{String, String}, cal::LinearMzCal, bin_scale::Integer, int_scale::Real, lo_mz::Real, hi_mz::Real)
     w = open(Arrow.Writer, String(path); metadata = meta)
-    SliceArrowWriter(String(path), w, Float32(lo_mz), Float32(hi_mz), cal, Int(bin_scale), 0, 0,
+    SliceArrowWriter(String(path), w, Float32(lo_mz), Float32(hi_mz), cal, Int(bin_scale), Float64(int_scale), 0, 0,
                      Union{Missing, Float32}[], Union{Missing, Float32}[], Int[1], Float32[], Float32[],
                      Union{Missing, Float32}[], Union{Missing, Float32}[], Union{Missing, Float32}[], Float32[],
                      UInt8[], Int32[], Int32[], UInt16[], UInt8[], 0)
@@ -39,7 +40,7 @@ function write_frame!(w::SliceArrowWriter, fm::FrameMeta, rows::SliceRows, blk::
         r = slice_range(blk, j)
         for k in r
             push!(w.mz, Float32(bin_to_mz(w.cal, Float64(blk.bin[k]) / w.bin_scale)))
-            push!(w.intensity, Float32(blk.intensity[k]))
+            push!(w.intensity, Float32(blk.intensity[k] / w.int_scale))   # stored integers are int_scale x intensity
         end
         push!(w.starts, length(w.mz) + 1)
         push!(w.retention_time, rows.retention_time[j]); push!(w.tic, rows.tic[j])

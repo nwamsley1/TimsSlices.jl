@@ -62,7 +62,7 @@ function process_frame!(wk::Worker, f::TdfFile, i::Int, ls1::LevelSetup, ls2::Le
     quantize!(wk.blk, wk.out, p.bin_scale, p.int_scale)
     n_words, nb = encode_block!(wk.codec, wk.blk, p.zstd_level)
     fm = frame_meta(f, i)
-    slice_rows!(wk.rows, fm, wk.blk, wk.out.scan, wk.out.window, windows(f, i), f.ce_ramp)
+    slice_rows!(wk.rows, fm, wk.blk, wk.out.scan, wk.out.window, windows(f, i), f.ce_ramp, p.int_scale)
     t3 = time_ns()
     wk.t_decode += (t1 - t0) / 1e9; wk.t_smooth += (t2 - t1) / 1e9; wk.t_encode += (t3 - t2) / 1e9
     FrameResult(seq, i, fm, deepcopy(wk.rows), keep_blk ? deepcopy(wk.blk) : nothing, n_peaks(wk.blk), wk.codec.zbuf[1:nb], n_words)
@@ -102,7 +102,7 @@ function convert(dir::AbstractString, out_dir::AbstractString; params::ConvertPa
     tdfs_path = want_tdfs ? joinpath(out_dir, name * ".tdfs") : nothing
     arrow_path = want_arrow ? joinpath(out_dir, name * ".arrow") : nothing
     tw = want_tdfs ? TdfsWriter(tdfs_path, meta) : nothing
-    aw = want_arrow ? SliceArrowWriter(arrow_path, arrow_metadata(meta, p, thr1, thr2), f.mz_cal, p.bin_scale, mz_lo, mz_hi) : nothing
+    aw = want_arrow ? SliceArrowWriter(arrow_path, arrow_metadata(meta, p, thr1, thr2), f.mz_cal, p.bin_scale, p.int_scale, mz_lo, mz_hi) : nothing
 
     nt = Threads.nthreads()
     workers = [Worker() for _ in 1:nt]

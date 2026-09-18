@@ -10,7 +10,7 @@ function expand(tdfs_dir::AbstractString, arrow_path::AbstractString; log::IO = 
     pd = meta["params"]
     p = ConvertParams(; (Symbol(k) => (k in ("centroid", "format") ? Symbol(v) : k == "frames" ? nothing : v) for (k, v) in pd)...)
     aw = SliceArrowWriter(arrow_path, arrow_metadata(meta, p, Float64(meta["cull_thr_ms1"]), Float64(meta["cull_thr_ms2"])),
-                          t.mz_cal, t.bin_scale, Float64(meta["mz_lo"]), Float64(meta["mz_hi"]))
+                          t.mz_cal, t.bin_scale, t.int_scale, Float64(meta["mz_lo"]), Float64(meta["mz_hi"]))
     blk = SliceBlock(); codec = BlockCodec(); rows = SliceRows()
     fr = t.frames; sl = t.slices
     t0 = time()
