@@ -15,6 +15,7 @@ Worker() = Worker(FrameBuffer(), SmoothScratch(), FrameSlices(), SliceBlock(), B
 
 "What one frame yields for the writers (owned by the main task after the batch)."
 struct FrameResult
+    seq::Int                            # position in the conversion order (for the ordered writer)
     row::Int
     fm::FrameMeta
     rows::SliceRows
@@ -52,7 +53,7 @@ function cull_thresholds(f::TdfFile, rows::Vector{Int}, p::ConvertParams)
     end
 end
 
-function process_frame!(wk::Worker, f::TdfFile, i::Int, ls1::LevelSetup, ls2::LevelSetup, p::ConvertParams, keep_blk::Bool)
+function process_frame!(wk::Worker, f::TdfFile, i::Int, ls1::LevelSetup, ls2::LevelSetup, p::ConvertParams, keep_blk::Bool, seq::Int = 0)
     t0 = time_ns()
     read_frame!(wk.buf, f, i)
     t1 = time_ns()
@@ -64,7 +65,7 @@ function process_frame!(wk::Worker, f::TdfFile, i::Int, ls1::LevelSetup, ls2::Le
     slice_rows!(wk.rows, fm, wk.blk, wk.out.scan, wk.out.window, windows(f, i), f.ce_ramp)
     t3 = time_ns()
     wk.t_decode += (t1 - t0) / 1e9; wk.t_smooth += (t2 - t1) / 1e9; wk.t_encode += (t3 - t2) / 1e9
-    FrameResult(i, fm, deepcopy(wk.rows), keep_blk ? deepcopy(wk.blk) : nothing, n_peaks(wk.blk), wk.codec.zbuf[1:nb], n_words)
+    FrameResult(seq, i, fm, deepcopy(wk.rows), keep_blk ? deepcopy(wk.blk) : nothing, n_peaks(wk.blk), wk.codec.zbuf[1:nb], n_words)
 end
 
 """
@@ -87,7 +88,7 @@ function convert(dir::AbstractString, out_dir::AbstractString; params::ConvertPa
 
     mz_lo = parse(Float64, f.meta["MzAcqRangeLower"]); mz_hi = parse(Float64, f.meta["MzAcqRangeUpper"])
     meta = Dict{String, Any}(
-        "source" => basename(rstrip(dir, '/')), "source_bin_bytes" => length(f.bin), "instrument" => get(f.meta, "InstrumentName", ""),
+        "source" => basename(rstrip(dir, '/')), "source_bin_bytes" => f.bin_size, "instrument" => get(f.meta, "InstrumentName", ""),
         "mz_cal_sqrt_intercept" => f.mz_cal.intercept, "mz_cal_sqrt_slope" => f.mz_cal.slope,
         "im_scan0_1overK0" => f.im_cal.intercept, "im_slope_1overK0_per_scan" => f.im_cal.slope,
         "ce_ev_intercept" => f.ce_ramp.intercept, "ce_ev_slope_per_scan" => f.ce_ramp.slope,
@@ -105,36 +106,47 @@ function convert(dir::AbstractString, out_dir::AbstractString; params::ConvertPa
 
     nt = Threads.nthreads()
     workers = [Worker() for _ in 1:nt]
-    batch = p.batch_frames > 0 ? p.batch_frames : 4nt
-    done = 0; t_loop = time(); n_slices_tot = 0; n_peaks_tot = Int[0, 0]
-    idx = 1
-    while idx <= length(rows)
-        ids = rows[idx:min(idx + batch - 1, length(rows))]
-        nb = length(ids)
-        results = Vector{FrameResult}(undef, nb)
-        next = Threads.Atomic{Int}(1)
-        @sync for t in 1:nt
-            Threads.@spawn begin
-                wk = workers[t]
-                while true
-                    q = Threads.atomic_add!(next, 1)
-                    q > nb && break
-                    results[q] = process_frame!(wk, f, ids[q], ls1, ls2, p, want_arrow)
-                end
-            end
+    inflight = p.batch_frames > 0 ? p.batch_frames : 16nt
+    n_rows = length(rows)
+    # workers pull frame indices from a counter and push results into a bounded channel (memory bound = inflight
+    # results); the main task reorders them and writes frames in order
+    next = Threads.Atomic{Int}(1)
+    results = Channel{FrameResult}(inflight)
+    worker_tasks = [Threads.@spawn begin
+        wk = workers[t]
+        while true
+            q = Threads.atomic_add!(next, 1)
+            q > n_rows && break
+            put!(results, process_frame!(wk, f, rows[q], ls1, ls2, p, want_arrow, q))
         end
-        for r in results
+    end for t in 1:nt]
+    done = 0; t_loop = time(); n_slices_tot = 0; n_peaks_tot = Int[0, 0]
+    pending = Dict{Int, FrameResult}()
+    next_write = 1
+    while next_write <= n_rows
+        r = try
+            take!(results)
+        catch e
+            # a worker failure closes nothing by itself; surface the first worker error
+            for t in worker_tasks; istaskfailed(t) && wait(t); end
+            rethrow(e)
+        end
+        pending[r.seq] = r
+        while haskey(pending, next_write)
+            r = pop!(pending, next_write)
             want_tdfs && write_frame!(tw, r.fm, r.rows, r.n_peaks, r.zbytes, r.n_words)
             want_arrow && write_frame!(aw, r.fm, r.rows, r.blk)
             n_slices_tot += length(r.rows); n_peaks_tot[r.fm.ms_order] += r.n_peaks
-        end
-        done += nb; idx += batch
-        if done % (batch * 25) == 0 || done == length(rows)
-            @printf(log, "  %d / %d frames, %.1f s\n", done, length(rows), time() - t_loop)
+            next_write += 1; done += 1
+            if done % 2000 == 0 || done == n_rows
+                @printf(log, "  %d / %d frames, %.1f s\n", done, n_rows, time() - t_loop)
+            end
         end
     end
+    foreach(wait, worker_tasks)
     t_proc = time() - t_loop
     want_tdfs && close(tw); want_arrow && close(aw)
+    close(f)
     td = sum(w.t_decode for w in workers); ts = sum(w.t_smooth for w in workers); te = sum(w.t_encode for w in workers)
     @printf(log, "frames %d -> slices %d, centroids MS1 %d + MS2 %d = %d\n", length(rows), n_slices_tot, n_peaks_tot[1], n_peaks_tot[2], sum(n_peaks_tot))
     @printf(log, "CPU seconds: decode %.1f, smooth %.1f, encode+rows %.1f; wall %.1f s on %d threads (write included); total %.1f s\n",

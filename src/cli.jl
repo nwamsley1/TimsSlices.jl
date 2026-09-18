@@ -10,7 +10,7 @@ Options (defaults in brackets):
   --mz-sigma S [3]  --centroid wmean|gauss|none [wmean]  --max-half H [max(4, 4*mz-sigma)]
   --cull-q Q [0]  --ms1-cull-q Q  --split-cull  --min-scans N [1]  --cull-sample-frames N [40]
   --bin-scale K [1]  --int-scale X [1]  --zstd-level L [3]  --format tdfs|arrow|both [tdfs]
-  --batch-frames N [4*threads]  --frames a:b (frame rows)  --name NAME
+  --batch-frames N [16*threads, results in flight]  --frames a:b (frame rows)  --name NAME
 """
 
 function parse_cli(args::Vector{String})

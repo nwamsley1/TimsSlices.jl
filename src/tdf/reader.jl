@@ -1,5 +1,5 @@
-# A .d bundle opened for reading: SQLite tables in memory, analysis.tdf_bin memory-mapped.
-using Mmap
+# A .d bundle opened for reading: SQLite tables in memory; analysis.tdf_bin read block by block with positioned
+# reads into per-thread buffers (a memory map would count every touched page of the 3-7 GB file as resident).
 
 struct TdfFile
     dir::String
@@ -10,7 +10,8 @@ struct TdfFile
     mz_cal_resid_ppm::Vector{Float64}
     im_cal::LinearImCal
     ce_ramp::CeRamp
-    bin::Vector{UInt8}          # mmap of analysis.tdf_bin
+    bin::IOStream               # analysis.tdf_bin (positioned reads; the stream position is never used)
+    bin_size::Int64
     compression::Int
     max_scans::Int
     max_peaks::Int
@@ -29,10 +30,8 @@ function open_tdf(dir::AbstractString)
     close(db)
     compression = parse(Int, get(meta, "TimsCompressionType", "2"))
     compression == 2 || error("only TimsCompressionType 2 is supported (file has $compression)")
-    bin = open(joinpath(dir, "analysis.tdf_bin"), "r") do io
-        Mmap.mmap(io, Vector{UInt8}, filesize(io))
-    end
-    TdfFile(String(dir), meta, frames, dia, cal, resid, imcal, ce, bin, compression,
+    bin = open(joinpath(dir, "analysis.tdf_bin"), "r")
+    TdfFile(String(dir), meta, frames, dia, cal, resid, imcal, ce, bin, filesize(bin), compression,
             isempty(frames.num_scans) ? 0 : Int(maximum(frames.num_scans)),
             isempty(frames.num_peaks) ? 0 : Int(maximum(frames.num_peaks)))
 end
@@ -55,21 +54,48 @@ end
 "Number of TOF bins on the digitiser axis (upper bound for any tof value)."
 n_bins(f::TdfFile) = parse(Int, get(f.meta, "DigitizerNumSamples", "0"))
 
-"Raw block header at frame row i: (payload view, block_size, scan_count)."
-function raw_block(f::TdfFile, i::Integer)
+"Read `n` bytes at byte offset `off` of the block file into `dst[1:n]` (thread-safe: positioned read)."
+function pread!(dst::Vector{UInt8}, f::TdfFile, off::Integer, n::Integer)
+    length(dst) < n && resize!(dst, n)
+    n == 0 && return dst
+    @static if Sys.isunix()
+        done = 0
+        GC.@preserve dst while done < n
+            r = ccall(:pread, Cssize_t, (Cint, Ptr{UInt8}, Csize_t, Int64), fd(f.bin), pointer(dst) + done, n - done, off + done)
+            r > 0 || error("pread of analysis.tdf_bin at offset $(off + done) failed: $(Libc.strerror(Libc.errno()))")
+            done += r
+        end
+    else
+        lock(f.bin) do
+            seek(f.bin, off); unsafe_read(f.bin, pointer(dst), n)
+        end
+    end
+    dst
+end
+
+"""
+    raw_block!(dst, f, i) -> (payload view, block_size, scan_count)
+
+Read frame row i's block (header + zstd payload) into `dst`.
+"""
+function raw_block!(dst::Vector{UInt8}, f::TdfFile, i::Integer)
     off = f.frames.tims_id[i]
-    off + 8 <= length(f.bin) || error("frame $(f.frames.id[i]): block offset $off beyond file")
-    p = pointer(f.bin) + off
-    block_size = GC.@preserve f unsafe_load(Ptr{UInt32}(p))
-    scan_count = GC.@preserve f unsafe_load(Ptr{UInt32}(p + 4))
-    off + block_size <= length(f.bin) || error("frame $(f.frames.id[i]): block runs beyond file")
-    view(f.bin, off + 9:off + block_size), Int(block_size), Int(scan_count)
+    off + 8 <= f.bin_size || error("frame $(f.frames.id[i]): block offset $off beyond file")
+    pread!(dst, f, off, 8)
+    block_size = GC.@preserve dst unsafe_load(Ptr{UInt32}(pointer(dst)))
+    scan_count = GC.@preserve dst unsafe_load(Ptr{UInt32}(pointer(dst) + 4))
+    block_size >= 8 || error("frame $(f.frames.id[i]): block_size $block_size < 8")
+    off + block_size <= f.bin_size || error("frame $(f.frames.id[i]): block runs beyond file")
+    pread!(dst, f, off, Int(block_size))
+    view(dst, 9:Int(block_size)), Int(block_size), Int(scan_count)
 end
 
 "Decode frame row i into `buf`."
 function read_frame!(buf::FrameBuffer, f::TdfFile, i::Integer)
-    payload, _, scan_count = raw_block(f, i)
+    payload, _, scan_count = raw_block!(buf.raw, f, i)
     ns = Int(f.frames.num_scans[i]); np = Int(f.frames.num_peaks[i])
     scan_count == ns || error("frame $(f.frames.id[i]): block scan_count $scan_count != NumScans $ns")
     decode_codec2!(buf, payload, ns, np)
 end
+
+Base.close(f::TdfFile) = close(f.bin)

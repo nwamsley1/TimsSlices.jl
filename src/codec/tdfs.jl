@@ -1,6 +1,6 @@
 # The .tdfs container: blocks.bin (u32 block_size, u32 n_words, zstd payload per frame), frames.arrow,
 # slices.arrow, meta.json. See docs/format.md.
-using Arrow, JSON3
+using Arrow, JSON3, Mmap
 
 const TDFS_FORMAT_VERSION = 1
 

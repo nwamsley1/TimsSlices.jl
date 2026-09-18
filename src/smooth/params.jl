@@ -37,7 +37,7 @@ Base.@kwdef struct ConvertParams
     zstd_level::Int = 3
     format::Symbol = :tdfs          # :tdfs, :arrow, :both
     # run
-    batch_frames::Int = 0            # 0 = 4 * threads
+    batch_frames::Int = 0            # results in flight between workers and the writer; 0 = 16 * threads
     frames::Union{Nothing, Vector{Int}} = nothing   # subset of frame rows (testing / benchmarks)
 end
 

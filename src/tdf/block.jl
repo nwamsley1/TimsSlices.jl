@@ -7,11 +7,12 @@ mutable struct FrameBuffer
     scan_start::Vector{Int32}    # n_scans + 1 entries; peaks of 0-based scan s are scan_start[s+1]:scan_start[s+2]-1
     tof::Vector{UInt32}          # TOF bin (0-based)
     intensity::Vector{UInt32}
+    raw::Vector{UInt8}           # the compressed block as read from disk
     planes::Vector{UInt8}        # zstd output (byte planes)
     words::Vector{UInt32}
     zstd::ZstdCtx
 end
-FrameBuffer() = FrameBuffer(0, 0, Int32[], UInt32[], UInt32[], UInt8[], UInt32[], ZstdCtx())
+FrameBuffer() = FrameBuffer(0, 0, Int32[], UInt32[], UInt32[], UInt8[], UInt8[], UInt32[], ZstdCtx())
 
 @inline scan_range(b::FrameBuffer, s::Integer) = (b.scan_start[s + 1]):(b.scan_start[s + 2] - 1)
 
