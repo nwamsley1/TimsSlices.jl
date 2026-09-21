@@ -179,7 +179,7 @@ end
     # the cap must not disturb the m/z-stage buffers: a wide slice (many peaks) capped, then a long run
     # (regression: the cap once grew sc.dense past sc.dcnt and a later run wrote out of bounds)
     @test length(sc.dense) == length(sc.dcnt)
-    wide = [[(500 + 3i, 100) for i in 1:4000] for _ in 1:8]              # 4000 peaks per scan, 3 bins apart (one long run)
+    wide = [[(500 + 3i, 100 + i) for i in 1:4000] for _ in 1:8]          # 4000 peaks per scan, 3 bins apart (one long run), distinct intensities
     buf2 = make_frame(wide); TS.reset!(out); TS.ensure_bins!(sc, 20_000)
     smooth_window!(out, sc, buf2, 0, 8, 1, LevelSetup(lp(mz_sigma = 1.0, stride = 8, max_peaks = 100), 0.0))
     @test length(sc.dense) == length(sc.dcnt) && out.n_slices == 1 && length(out.pos) == 100
