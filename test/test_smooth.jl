@@ -176,6 +176,13 @@ end
     @test all(j -> out.ptr[j+1] - out.ptr[j] == 5, 1:out.n_slices)
     @test all(j -> all(p -> p > 1000 + 20 * 25 - 1, out.pos[out.ptr[j]:out.ptr[j+1]-1]), 1:out.n_slices)   # the 5 brightest ions
     @test output_name("r.d", ConvertParams(max_peaks = 1000)) == "r_cen_s5_m3_k8_q0_wmean_sum_top1000"
+    # the cap must not disturb the m/z-stage buffers: a wide slice (many peaks) capped, then a long run
+    # (regression: the cap once grew sc.dense past sc.dcnt and a later run wrote out of bounds)
+    @test length(sc.dense) == length(sc.dcnt)
+    wide = [[(500 + 3i, 100) for i in 1:4000] for _ in 1:8]              # 4000 peaks per scan, 3 bins apart (one long run)
+    buf2 = make_frame(wide); TS.reset!(out); TS.ensure_bins!(sc, 20_000)
+    smooth_window!(out, sc, buf2, 0, 8, 1, LevelSetup(lp(mz_sigma = 1.0, stride = 8, max_peaks = 100), 0.0))
+    @test length(sc.dense) == length(sc.dcnt) && out.n_slices == 1 && length(out.pos) == 100
 end
 
 @testset "params" begin

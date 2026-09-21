@@ -12,8 +12,9 @@ mutable struct SmoothScratch
     sp_cnt::Vector{Int32}
     dense::Vector{Float64}
     dcnt::Vector{Int32}
+    tmp::Vector{Float64}       # cap_slice! scratch (dense / dcnt are resized together and must stay paired)
 end
-SmoothScratch() = SmoothScratch(0, Float64[], UInt16[], UInt64[], Int32[], Float64[], Int32[], Float64[], Int32[])
+SmoothScratch() = SmoothScratch(0, Float64[], UInt16[], UInt64[], Int32[], Float64[], Int32[], Float64[], Int32[], Float64[])
 
 "Grow the dense accumulators to cover bins 0 .. n_bins-1."
 function ensure_bins!(sc::SmoothScratch, n_bins::Integer)

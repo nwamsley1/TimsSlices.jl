@@ -30,7 +30,7 @@ function smooth_window!(out::FrameSlices, sc::SmoothScratch, buf::FrameBuffer, s
         else
             centroid_slice!(out, sc, lp, ls.kmz, ls.h_mz, ls.thr)
         end
-        lp.max_peaks > 0 && cap_slice!(out, lp.max_peaks, sc.dense)
+        lp.max_peaks > 0 && cap_slice!(out, lp.max_peaks, sc.tmp)
         end_slice!(out, c, widx)
     end
     out
