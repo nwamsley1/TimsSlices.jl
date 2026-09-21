@@ -30,9 +30,33 @@ function smooth_window!(out::FrameSlices, sc::SmoothScratch, buf::FrameBuffer, s
         else
             centroid_slice!(out, sc, lp, ls.kmz, ls.h_mz, ls.thr)
         end
+        lp.max_peaks > 0 && cap_slice!(out, lp.max_peaks, sc.dense)
         end_slice!(out, c, widx)
     end
     out
+end
+
+"""
+    cap_slice!(fs, n, tmp)
+
+Keep only the `n` most intense peaks of the slice currently being filled (those after the last `end_slice!`),
+preserving their position order. Ties at the threshold are kept (the slice may then exceed `n` slightly).
+"""
+function cap_slice!(fs::FrameSlices, n::Int, tmp::Vector{Float64})
+    first = Int(fs.ptr[end]); last = length(fs.pos)
+    m = last - first + 1
+    m <= n && return fs
+    length(tmp) < m && resize!(tmp, m)
+    copyto!(tmp, 1, fs.val, first, m)
+    thr = partialsort!(view(tmp, 1:m), n; rev = true)      # the n-th largest intensity
+    w = first
+    @inbounds for k in first:last
+        if fs.val[k] >= thr
+            fs.pos[w] = fs.pos[k]; fs.val[w] = fs.val[k]; w += 1
+        end
+    end
+    resize!(fs.pos, w - 1); resize!(fs.val, w - 1)
+    fs
 end
 
 """

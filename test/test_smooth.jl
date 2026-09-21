@@ -15,8 +15,8 @@ function make_frame(scans::Vector{Vector{Tuple{Int, Int}}})
     buf
 end
 
-lp(; im_sigma = 5.0, extent = 3.0, stride = 8, sum_scale = true, mz_sigma = 3.0, centroid = :wmean, max_half = 12, cull_q = 0.0, min_scans = 1) =
-    LevelParams(im_sigma, extent, stride, sum_scale, mz_sigma, centroid, max_half, cull_q, min_scans)
+lp(; im_sigma = 5.0, extent = 3.0, stride = 8, sum_scale = true, mz_sigma = 3.0, centroid = :wmean, max_half = 12, cull_q = 0.0, min_scans = 1, max_peaks = 0) =
+    LevelParams(im_sigma, extent, stride, sum_scale, mz_sigma, centroid, max_half, cull_q, min_scans, max_peaks)
 
 @testset "kernels" begin
     @test gauss_kernel(0.0) == [1.0]
@@ -153,6 +153,29 @@ end
     TS.reset!(out); smooth_window!(out, sc, buf, 0, 64, 1, LevelSetup(l2, 0.0))
     j = findfirst(==(15), out.scan); r = out.ptr[j]:out.ptr[j+1]-1
     @test out.val[r][argmin(abs.(out.pos[r] .- 5000))] ≈ 100 atol = 1e-6
+end
+
+@testset "top-N cap per slice" begin
+    fs = FrameSlices()
+    for (pos, val) in ((10.0, 1.0), (20.0, 9.0), (30.0, 3.0), (40.0, 7.0), (50.0, 5.0)); TS.push_peak!(fs, pos, val); end
+    TS.cap_slice!(fs, 3, Float64[])
+    @test fs.pos == [20.0, 40.0, 50.0] && fs.val == [9.0, 7.0, 5.0]     # the 3 most intense, still in position order
+    TS.end_slice!(fs, 0, 1)
+    for (pos, val) in ((1.0, 2.0), (2.0, 2.0), (3.0, 1.0)); TS.push_peak!(fs, pos, val); end
+    TS.cap_slice!(fs, 1, Float64[])                                        # ties at the threshold are kept
+    @test fs.pos[fs.ptr[end]:end] == [1.0, 2.0]
+    TS.cap_slice!(fs, 5, Float64[])                                        # no-op below the cap
+    @test length(fs.pos) == 5 && fs.ptr == Int32[1, 4]
+    # through the pipeline: the capped level keeps the n most intense centroids of every slice
+    scans = Vector{Vector{Tuple{Int, Int}}}()
+    for s in 0:31
+        push!(scans, [(1000 + 20i, 10 + i) for i in 1:30])      # 30 ions, intensities 11..40
+    end
+    buf = make_frame(scans); sc = SmoothScratch(); TS.ensure_bins!(sc, 10_000); out = FrameSlices()
+    smooth_window!(out, sc, buf, 0, 32, 1, LevelSetup(lp(mz_sigma = 1.0, max_peaks = 5), 0.0))
+    @test all(j -> out.ptr[j+1] - out.ptr[j] == 5, 1:out.n_slices)
+    @test all(j -> all(p -> p > 1000 + 20 * 25 - 1, out.pos[out.ptr[j]:out.ptr[j+1]-1]), 1:out.n_slices)   # the 5 brightest ions
+    @test output_name("r.d", ConvertParams(max_peaks = 1000)) == "r_cen_s5_m3_k8_q0_wmean_sum_top1000"
 end
 
 @testset "params" begin
