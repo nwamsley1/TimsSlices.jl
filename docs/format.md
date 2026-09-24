@@ -77,8 +77,8 @@ extra state.
 
 `format_version` (2), `source`, `source_bin_bytes`, `instrument`, `mz_cal_sqrt_intercept`, `mz_cal_sqrt_slope`,
 `im_scan0_1overK0`, `im_slope_1overK0_per_scan`, `ce_ev_intercept`, `ce_ev_slope_per_scan`, `NumScans`, `n_bins`,
-`mz_lo`, `mz_hi`, `OneOverK0AcqRangeLower/Upper`, `params` (every `ConvertParams` field), `cull_thr_ms1`,
-`cull_thr_ms2` (intensity thresholds actually applied), `bin_scale`, `int_scale`, `zstd_level`, `converter`,
+`mz_lo`, `mz_hi`, `OneOverK0AcqRangeLower/Upper`, `params` (every `ConvertParams` field; files from before 0.1 also
+carry `cull_thr_ms1` / `cull_thr_ms2` and the removed quantile-cull params), `bin_scale`, `int_scale`, `zstd_level`, `converter`,
 `converted_at`, `n_frames`, `n_slices`, `n_peaks`, `blocks_bytes`.
 
 ## Variant A

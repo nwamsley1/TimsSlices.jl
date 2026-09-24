@@ -1,5 +1,22 @@
-# The converter driver: cull sampling, frame batches over worker tasks with per-task scratch, ordered writers.
-using Statistics, Printf
+# Copyright (C) 2026 Nathan Wamsley
+#
+# This file is part of TimsSlices.jl
+#
+# TimsSlices.jl is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+# The converter driver: frame batches over worker tasks with per-task scratch, ordered writers.
+using Printf
 
 "Everything one worker task owns."
 mutable struct Worker
@@ -27,30 +44,6 @@ end
 
 function frame_meta(f::TdfFile, i::Integer)
     FrameMeta(f.frames.id[i], is_ms1(f, i) ? 0x01 : 0x02, UInt8(f.dia.frame_group[i]), f.frames.time[i], f.frames.ramp_time[i], f.frames.num_scans[i])
-end
-
-"Raw-intensity quantile thresholds (MS1, MS2) from sample frames; 0 when the quantile is 0."
-function cull_thresholds(f::TdfFile, rows::Vector{Int}, p::ConvertParams)
-    (p.cull_q == 0 && p.ms1_cull_q == 0) && return 0.0, 0.0
-    buf = FrameBuffer()
-    sample_of(idxs) = isempty(idxs) ? Int[] : idxs[unique(round.(Int, range(1, length(idxs); length = min(p.cull_sample_frames, length(idxs)))))]
-    function raw_of(idxs)
-        v = Float64[]
-        for i in idxs
-            read_frame!(buf, f, i); append!(v, Float64.(view(buf.intensity, 1:buf.n_peaks)))
-        end
-        v
-    end
-    if p.split_cull
-        raw1 = raw_of(sample_of(filter(i -> is_ms1(f, i), rows))); raw2 = raw_of(sample_of(filter(i -> !is_ms1(f, i), rows)))
-        thr1 = p.ms1_cull_q > 0 && !isempty(raw1) ? quantile(raw1, p.ms1_cull_q) : 0.0
-        thr2 = p.cull_q > 0 && !isempty(raw2) ? quantile(raw2, p.cull_q) : 0.0
-        return thr1, thr2
-    else
-        raw = raw_of(sample_of(rows))
-        thr = p.cull_q > 0 && !isempty(raw) ? quantile(raw, p.cull_q) : 0.0
-        return thr, thr
-    end
 end
 
 function process_frame!(wk::Worker, f::TdfFile, i::Int, ls1::LevelSetup, ls2::LevelSetup, p::ConvertParams, keep_blk::Bool, seq::Int = 0)
@@ -87,9 +80,8 @@ function convert(dir::AbstractString, out_dir::AbstractString; params::ConvertPa
     all(i -> 1 <= i <= n_frames(f) && (is_ms1(f, i) || is_dia(f, i)), rows) || throw(ArgumentError("frames must be rows of MS1 / diaPASEF frames"))
     @printf(log, "source %s: %d frames (%d MS1, %d MS2), %d raw peaks; mz cal residual ppm %s\n", basename(rstrip(dir, '/')), length(rows),
             count(i -> is_ms1(f, i), rows), count(i -> !is_ms1(f, i), rows), sum(Int, f.frames.num_peaks[rows]), string(round.(f.mz_cal_resid_ppm, digits = 2)))
-    thr1, thr2 = cull_thresholds(f, rows, p)
-    ls1 = LevelSetup(level_params(p, true), thr1); ls2 = LevelSetup(level_params(p, false), thr2)
-    @printf(log, "params %s\ncull thresholds: MS1 %.1f (q%g), MS2 %.1f (q%g)\n", string(Dict(p)), thr1, p.ms1_cull_q, thr2, p.cull_q)
+    ls1 = LevelSetup(level_params(p, true)); ls2 = LevelSetup(level_params(p, false))
+    @printf(log, "params %s\n", string(Dict(p)))
 
     mz_lo = parse(Float64, f.meta["MzAcqRangeLower"]); mz_hi = parse(Float64, f.meta["MzAcqRangeUpper"])
     meta = Dict{String, Any}(
@@ -99,7 +91,7 @@ function convert(dir::AbstractString, out_dir::AbstractString; params::ConvertPa
         "ce_ev_intercept" => f.ce_ramp.intercept, "ce_ev_slope_per_scan" => f.ce_ramp.slope,
         "NumScans" => f.max_scans, "n_bins" => n_bins(f), "mz_lo" => mz_lo, "mz_hi" => mz_hi,
         "OneOverK0AcqRangeLower" => f.meta["OneOverK0AcqRangeLower"], "OneOverK0AcqRangeUpper" => f.meta["OneOverK0AcqRangeUpper"],
-        "params" => Dict(p), "cull_thr_ms1" => thr1, "cull_thr_ms2" => thr2,
+        "params" => Dict(p),
         "bin_scale" => p.bin_scale, "int_scale" => p.int_scale, "zstd_level" => p.zstd_level,
         "converter" => "TimsSlices.jl $(pkgversion(TimsSlices))", "converted_at" => string(now_utc()))
     mkpath(out_dir)
@@ -107,7 +99,7 @@ function convert(dir::AbstractString, out_dir::AbstractString; params::ConvertPa
     tdfs_path = want_tdfs ? joinpath(out_dir, name * ".tdfs") : nothing
     arrow_path = want_arrow ? joinpath(out_dir, name * ".arrow") : nothing
     tw = want_tdfs ? TdfsWriter(tdfs_path, meta) : nothing
-    aw = want_arrow ? SliceArrowWriter(arrow_path, arrow_metadata(meta, p, thr1, thr2), f.mz_cal, p.bin_scale, p.int_scale, mz_lo, mz_hi) : nothing
+    aw = want_arrow ? SliceArrowWriter(arrow_path, arrow_metadata(meta, p), f.mz_cal, p.bin_scale, p.int_scale, mz_lo, mz_hi) : nothing
 
     nt = Threads.nthreads()
     workers = [Worker() for _ in 1:nt]
@@ -168,17 +160,17 @@ function convert(dir::AbstractString, out_dir::AbstractString; params::ConvertPa
     (tdfs = tdfs_path, arrow = arrow_path)
 end
 
-function arrow_metadata(meta::Dict{String, Any}, p::ConvertParams, thr1, thr2)
+function arrow_metadata(meta::Dict{String, Any}, p::ConvertParams)
     m = Dict{String, String}()
     for k in ("source", "instrument", "mz_cal_sqrt_intercept", "mz_cal_sqrt_slope", "im_scan0_1overK0", "im_slope_1overK0_per_scan",
               "ce_ev_intercept", "ce_ev_slope_per_scan", "NumScans", "OneOverK0AcqRangeLower", "OneOverK0AcqRangeUpper")
         m[k] = string(meta[k])
     end
     m["centroid_im_sigma"] = string(p.im_sigma); m["centroid_mz_sigma"] = string(p.mz_sigma); m["centroid_stride"] = string(p.stride)
-    m["centroid_cull_q"] = string(p.cull_q); m["centroid_cull_thr"] = string(thr2); m["centroid_method"] = string(p.centroid)
+    m["centroid_method"] = string(p.centroid)
     m["centroid_sum_scale"] = string(p.sum_scale); m["centroid_min_scans"] = string(p.min_scans)
-    m["centroid_ms1_stride"] = string(p.ms1_stride); m["centroid_ms1_cull_q"] = string(p.ms1_cull_q)
-    m["centroid_split_cull"] = string(p.split_cull); m["centroid_cull_thr_ms1"] = string(thr1); m["centroid_cull_thr_ms2"] = string(thr2)
+    m["centroid_ms1_stride"] = string(p.ms1_stride)
+    m["centroid_max_peaks"] = string(p.max_peaks); m["centroid_ms1_max_peaks"] = string(p.ms1_max_peaks)
     m["bin_scale"] = string(p.bin_scale); m["int_scale"] = string(p.int_scale)
     m
 end

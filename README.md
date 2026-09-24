@@ -14,7 +14,8 @@ Pipeline per frame: decode the raw block (zstd, byte planes, per-scan prefix sum
 `stride`-th IM scan, accumulate a Gaussian (`im_sigma` scans) over the scans in reach per TOF bin → Gaussian
 (`mz_sigma` bins) along the TOF axis over runs of nearby bins → local maxima with a footprint walk
 (`max_half`), intensity-weighted mean position (`wmean`) or Gaussian apex (`gauss`), footprint sum as intensity
-→ culls (`cull_q` raw-intensity quantile per level, `min_scans` persistence) → fixed-point bins (`bin_scale`),
+→ culls (`min_scans` persistence; `max_peaks` keeps the 1,500 most intense centroids per MS2 slice, MS1
+uncapped) → fixed-point bins (`bin_scale`),
 delta coding, byte planes, zstd.
 
 Development:

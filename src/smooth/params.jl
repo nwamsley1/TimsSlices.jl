@@ -1,3 +1,20 @@
+# Copyright (C) 2026 Nathan Wamsley
+#
+# This file is part of TimsSlices.jl
+#
+# TimsSlices.jl is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 # All converter knobs. Per-level (MS1 / MS2) values are resolved by `level_params`.
 
 "Parameters of the smoothing pipeline for one MS level."
@@ -9,7 +26,6 @@ struct LevelParams
     mz_sigma::Float64       # bins
     centroid::Symbol        # :wmean, :gauss, :none
     max_half::Int           # footprint walk limit (bins)
-    cull_q::Float64         # raw-intensity quantile cull (0 = off)
     min_scans::Int          # persistence cull (1 = off)
     max_peaks::Int          # keep only the N most intense centroids of a slice (0 = off)
 end
@@ -27,12 +43,8 @@ Base.@kwdef struct ConvertParams
     centroid::Symbol = :wmean
     max_half::Int = max(4, ceil(Int, 4 * mz_sigma))
     # culls
-    cull_q::Float64 = 0.0
-    ms1_cull_q::Float64 = cull_q
-    split_cull::Bool = ms1_cull_q != cull_q
     min_scans::Int = 1
-    cull_sample_frames::Int = 40
-    max_peaks::Int = 0               # per slice, MS2 (0 = off)
+    max_peaks::Int = 1500            # per slice, MS2: keep the N most intense centroids (0 = off)
     ms1_max_peaks::Int = 0           # per slice, MS1 (0 = off)
     # format
     bin_scale::Int = 1
@@ -51,7 +63,6 @@ function validate(p::ConvertParams)
     p.mz_sigma >= 0 || throw(ArgumentError("mz_sigma must be >= 0"))
     p.centroid in (:wmean, :gauss, :none) || throw(ArgumentError("centroid must be :wmean, :gauss or :none"))
     p.max_half >= 1 || throw(ArgumentError("max_half must be >= 1"))
-    0 <= p.cull_q < 1 && 0 <= p.ms1_cull_q < 1 || throw(ArgumentError("cull_q must be in [0, 1)"))
     p.min_scans >= 1 || throw(ArgumentError("min_scans must be >= 1"))
     p.max_peaks >= 0 && p.ms1_max_peaks >= 0 || throw(ArgumentError("max_peaks must be >= 0"))
     p.bin_scale >= 1 || throw(ArgumentError("bin_scale must be >= 1"))
@@ -62,19 +73,18 @@ function validate(p::ConvertParams)
 end
 
 level_params(p::ConvertParams, ms1::Bool) = ms1 ?
-    LevelParams(p.ms1_im_sigma, p.kernel_extent, p.ms1_stride, p.sum_scale, p.mz_sigma, p.centroid, p.max_half, p.ms1_cull_q, p.min_scans, p.ms1_max_peaks) :
-    LevelParams(p.im_sigma, p.kernel_extent, p.stride, p.sum_scale, p.mz_sigma, p.centroid, p.max_half, p.cull_q, p.min_scans, p.max_peaks)
+    LevelParams(p.ms1_im_sigma, p.kernel_extent, p.ms1_stride, p.sum_scale, p.mz_sigma, p.centroid, p.max_half, p.min_scans, p.ms1_max_peaks) :
+    LevelParams(p.im_sigma, p.kernel_extent, p.stride, p.sum_scale, p.mz_sigma, p.centroid, p.max_half, p.min_scans, p.max_peaks)
 
 "Output base name from the source name and the parameters (same convention as the prototype sweeps)."
 function output_name(source::AbstractString, p::ConvertParams)
     fmt(x) = isinteger(x) ? string(Int(x)) : string(x)
     name = replace(basename(rstrip(source, '/')), r"\.d$" => "")
-    name *= "_cen_s$(fmt(p.im_sigma))_m$(fmt(p.mz_sigma))_k$(p.stride)_q$(fmt(p.cull_q))_$(p.centroid)"
+    name *= "_cen_s$(fmt(p.im_sigma))_m$(fmt(p.mz_sigma))_k$(p.stride)_$(p.centroid)"
     p.sum_scale && (name *= "_sum")
     p.min_scans > 1 && (name *= "_n$(p.min_scans)")
     p.ms1_im_sigma != p.im_sigma && (name *= "_ms1s$(fmt(p.ms1_im_sigma))")
     p.ms1_stride != p.stride && (name *= "_ms1k$(p.ms1_stride)")
-    p.ms1_cull_q != p.cull_q ? (name *= "_ms1q$(fmt(p.ms1_cull_q))") : (p.split_cull && (name *= "_splitq"))
     p.max_peaks > 0 && (name *= "_top$(p.max_peaks)")
     p.ms1_max_peaks > 0 && (name *= "_ms1top$(p.ms1_max_peaks)")
     p.bin_scale != 1 && (name *= "_b$(p.bin_scale)")

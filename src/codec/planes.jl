@@ -1,5 +1,26 @@
+# Copyright (C) 2026 Nathan Wamsley
+#
+# This file is part of TimsSlices.jl
+#
+# TimsSlices.jl is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 # Byte transposition: n UInt32 words <-> four byte planes of length n (plane p holds byte p of every word).
 # Bruker's layout, and ours. Both loops are plain SIMD loops (widen/shift/or, narrowing stores).
+#
+# Why: the words are mostly small numbers (bin deltas, intensities), so their high bytes are nearly all zero.
+# Stored word by word, those zeros are interleaved with the busy low bytes; stored plane by plane, the high planes
+# become long runs of zeros and near-zeros that zstd compresses to almost nothing.
 
 """
     untranspose!(words, planes, n)

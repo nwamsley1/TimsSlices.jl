@@ -1,3 +1,20 @@
+# Copyright (C) 2026 Nathan Wamsley
+#
+# This file is part of TimsSlices.jl
+#
+# TimsSlices.jl is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 # Real-data tests: the raw reader against its checksum fixture, the pipeline against the frozen prototype, and
 # the container round trip through `expand`.
 using Arrow, DataFrames, CodecZstd
@@ -36,7 +53,7 @@ end
 "Compare the new pipeline with the prototype on `sel` frame rows of `dpath` with the given parameters."
 function check_equivalence(dpath, sel, p::ConvertParams, rp)
     f = open_tdf(dpath)
-    ls1 = LevelSetup(level_params(p, true), 0.0); ls2 = LevelSetup(level_params(p, false), 0.0)
+    ls1 = LevelSetup(level_params(p, true)); ls2 = LevelSetup(level_params(p, false))
     buf = FrameBuffer(); sc = SmoothScratch(); out = FrameSlices()
     rb = Ref.open_tdf(dpath); groups, frame_group = Ref.read_windows(rb.db)
     kim = Ref.gauss_kernel(rp.im_sigma) .* (rp.sum_scale ? rp.stride : 1); kmz = Ref.gauss_kernel(rp.mz_sigma); rsc = Ref.Scratch()
@@ -91,8 +108,9 @@ end
 @testset "equivalence with the prototype (HeLa)" begin
     f = open_tdf(HELA)
     sel = vcat(sample_rows(f, true, 4), sample_rows(f, false, 6))
-    for (p, rp) in ((ConvertParams(im_sigma = 5.0, mz_sigma = 3.0, stride = 8, sum_scale = true), Ref.CParams(5.0, 3.0, 8, 0.0, :wmean, 12, true, 1)),
-                    (ConvertParams(im_sigma = 2.0, mz_sigma = 1.0, stride = 4, sum_scale = false, centroid = :gauss, min_scans = 3),
+    # the prototype has no peak cap, so these compare uncapped (max_peaks = 0)
+    for (p, rp) in ((ConvertParams(im_sigma = 5.0, mz_sigma = 3.0, stride = 8, sum_scale = true, max_peaks = 0), Ref.CParams(5.0, 3.0, 8, 0.0, :wmean, 12, true, 1)),
+                    (ConvertParams(im_sigma = 2.0, mz_sigma = 1.0, stride = 4, sum_scale = false, centroid = :gauss, min_scans = 3, max_peaks = 0),
                      Ref.CParams(2.0, 1.0, 4, 0.0, :gauss, 4, false, 3)))
         n, dpos, dint = check_equivalence(HELA, sel, p, rp)
         @test n > 100_000
@@ -107,7 +125,7 @@ if BIG
             isdir(dpath) || (@warn "missing $dpath"; continue)
             f = open_tdf(dpath)
             sel = vcat(sample_rows(f, true, 10), sample_rows(f, false, 10))
-            n, dpos, dint = check_equivalence(dpath, sel, ConvertParams(), Ref.CParams(5.0, 3.0, 8, 0.0, :wmean, 12, true, 1))
+            n, dpos, dint = check_equivalence(dpath, sel, ConvertParams(max_peaks = 0), Ref.CParams(5.0, 3.0, 8, 0.0, :wmean, 12, true, 1))
             @test n > 1_000_000 && dpos == 0.0 && dint < 1e-6
         end
     end
@@ -123,11 +141,11 @@ end
 
 @testset "container round trip (HeLa, 120 frames)" begin
     out_dir = mktempdir()
-    p = ConvertParams(format = :both, frames = collect(1:120), bin_scale = 2, int_scale = 16, cull_q = 0.01, ms1_cull_q = 0.0)
+    p = ConvertParams(format = :both, frames = collect(1:120), bin_scale = 2, int_scale = 16, max_peaks = 200)
     paths = TimsSlices.convert(HELA, out_dir; params = p, name = "rt", log = devnull)
     @test isdir(paths.tdfs) && isfile(paths.arrow)
     t = open_tdfs(paths.tdfs)
-    @test n_frames(t) == 120 && t.bin_scale == 2 && t.int_scale == 16 && t.meta["params"]["cull_q"] == 0.01
+    @test n_frames(t) == 120 && t.bin_scale == 2 && t.int_scale == 16 && t.meta["params"]["max_peaks"] == 200
     @test t.frames.ms_order[1] == 0x01 && t.frames.cycle_idx[1] == 1 && t.frames.cycle_idx[10] == 2
     # slices table consistent with frames table and blocks
     @test sum(t.frames.n_slices) == n_slices(t)
@@ -166,7 +184,17 @@ end
     @test a.mz_array[1][1] == Float32(TS.bin_to_mz(t, blk.bin[1])) && a.intensity_array[1][1] == Float32(TS.stored_to_intensity(t, blk.intensity[1]))
     @test a.intensity_array[1][1] == Float32(blk.intensity[1] / 16)
     @test a.retentionTime[1] == t.slices.retention_time[1] && a.imScan[1] == t.slices.im_scan[1]
-    # cull thresholds recorded and applied (MS2 quantile cull, MS1 none)
-    @test t.meta["cull_thr_ms2"] > 0 && t.meta["cull_thr_ms1"] == 0
+    # the MS2 cap applies (ties at the n-th intensity may keep a few more), MS1 is uncapped
+    ms2_peaks = t.slices.n_peaks[t.slices.ms_order .== 0x02]
+    @test maximum(ms2_peaks) <= 210 && count(>(200), ms2_peaks) <= 0.01 * length(ms2_peaks)
+    @test maximum(t.slices.n_peaks[t.slices.ms_order .== 0x01]) > 200
+    # expand still reads files whose params include fields this version no longer has (pre-0.1 quantile culls)
+    mp = joinpath(paths.tdfs, "meta.json"); m = TimsSlices.JSON3.read(read(mp, String), Dict{String, Any})
+    merge!(m["params"], Dict{String, Any}("cull_q" => 0.01, "ms1_cull_q" => 0.0, "split_cull" => true, "cull_sample_frames" => 40))
+    m["cull_thr_ms1"] = 0.0; m["cull_thr_ms2"] = 12.5
+    write(mp, TimsSlices.JSON3.write(m))
+    old_path = joinpath(out_dir, "rt_old_params.arrow")
+    expand(paths.tdfs, old_path; log = devnull)
+    @test length(Arrow.Table(old_path).scanNumber) == n_slices(t)
     rm(out_dir; recursive = true)
 end

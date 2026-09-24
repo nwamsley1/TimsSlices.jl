@@ -1,3 +1,20 @@
+# Copyright (C) 2026 Nathan Wamsley
+#
+# This file is part of TimsSlices.jl
+#
+# TimsSlices.jl is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 # tdfs -> Pioneer slice Arrow (today's schema). Validates the container end to end: expand(convert(x)) must equal
 # the Arrow that convert writes directly.
 
@@ -8,8 +25,10 @@ function expand(tdfs_dir::AbstractString, arrow_path::AbstractString; log::IO = 
     t = open_tdfs(tdfs_dir)
     meta = t.meta
     pd = meta["params"]
-    p = ConvertParams(; (Symbol(k) => (k in ("centroid", "format") ? Symbol(v) : k == "frames" ? nothing : v) for (k, v) in pd)...)
-    aw = SliceArrowWriter(arrow_path, arrow_metadata(meta, p, Float64(meta["cull_thr_ms1"]), Float64(meta["cull_thr_ms2"])),
+    # Parameters a later TimsSlices no longer has (e.g. the quantile culls, removed in 0.1) are ignored.
+    p = ConvertParams(; (Symbol(k) => (k in ("centroid", "format") ? Symbol(v) : k == "frames" ? nothing : v)
+                         for (k, v) in pd if Symbol(k) in fieldnames(ConvertParams))...)
+    aw = SliceArrowWriter(arrow_path, arrow_metadata(meta, p),
                           t.mz_cal, t.bin_scale, t.int_scale, Float64(meta["mz_lo"]), Float64(meta["mz_hi"]))
     blk = SliceBlock(); codec = BlockCodec(); rows = SliceRows()
     fr = t.frames; sl = t.slices
