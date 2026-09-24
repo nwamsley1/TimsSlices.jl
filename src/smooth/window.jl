@@ -42,10 +42,17 @@ struct LevelSetup
     kmz::Vector{Float64}
     h_im::Int
     h_mz::Int
+    mzk::MzKernels
 end
 function LevelSetup(lp::LevelParams)
     kim = im_kernel(lp); kmz = mz_kernel(lp)
-    LevelSetup(lp, kim, kmz, length(kim) ÷ 2, length(kmz) ÷ 2)
+    LevelSetup(lp, kim, kmz, length(kim) ÷ 2, length(kmz) ÷ 2, MzKernels(kmz, lp.max_half))
+end
+"With `mz_sigma_ppm > 0`, the m/z kernel is constant in ppm: its width in bins is looked up per TOF bin (`MzKernels`)."
+function LevelSetup(lp::LevelParams, mz_sigma_ppm::Real, cal::LinearMzCal, nbins::Integer)
+    ls = LevelSetup(lp)
+    mz_sigma_ppm > 0 || return ls
+    LevelSetup(ls.lp, ls.kim, ls.kmz, ls.h_im, ls.h_mz, MzKernels(mz_sigma_ppm, cal, nbins, lp.kernel_extent))
 end
 
 """
@@ -62,7 +69,7 @@ function smooth_window!(out::FrameSlices, sc::SmoothScratch, buf::FrameBuffer, s
         if lp.centroid == :none
             emit_sparse!(out, sc, lp.min_scans)
         else
-            centroid_slice!(out, sc, lp, ls.kmz, ls.h_mz)
+            centroid_slice!(out, sc, lp, ls.mzk)
         end
         lp.max_peaks > 0 && cap_slice!(out, lp.max_peaks, sc.tmp)
         end_slice!(out, c, widx)

@@ -47,12 +47,40 @@ processed independently. Each run is:
 4. passed to `centroid_dense!`, which looks for apices only between the first and last occupied bin (the
    padding holds nothing but falling Gaussian tails).
 """
-function centroid_slice!(out::FrameSlices, sc::SmoothScratch, lp::LevelParams, kmz::Vector{Float64}, h_mz::Int)
+centroid_slice!(out::FrameSlices, sc::SmoothScratch, lp::LevelParams, kmz::Vector{Float64}, h_mz::Int) =
+    centroid_slice!(out, sc, lp, MzKernels(kmz, lp.max_half))
+
+"""
+m/z kernels by TOF bin. A fixed `mz_sigma` (bins) is the one-kernel case. With a sigma constant in ppm the width in
+bins grows with the bin: `mz = (a + b t)^2`, so `d mz / d t = 2b (a + b t)` and
+`sigma_bins(t) = sigma_ppm 1e-6 mz / (d mz / d t) = c0 + c1 t` with `c0 = sigma_ppm 1e-6 a / 2b`,
+`c1 = sigma_ppm 1e-6 / 2`. Kernels are precomputed on a 0.1-bin sigma grid; `max_half` scales as `max(4, 4 sigma)`.
+"""
+struct MzKernels
+    ks::Vector{Vector{Float64}}
+    max_half::Vector{Int}
+    c0::Float64
+    c1::Float64
+    q_lo::Int                        # grid index of ks[1] (sigma = q / 10 bins)
+end
+MzKernels(kmz::Vector{Float64}, max_half::Int) = MzKernels([kmz], [max_half], 0.0, 0.0, 0)
+function MzKernels(sigma_ppm::Real, cal::LinearMzCal, nbins::Integer, extent::Real)
+    c0 = sigma_ppm * 1e-6 * cal.intercept / (2cal.slope); c1 = sigma_ppm * 1e-6 / 2
+    q_lo = max(1, round(Int, 10 * (c0 + c1 * 0))); q_hi = max(q_lo, round(Int, 10 * (c0 + c1 * nbins)))
+    MzKernels([gauss_kernel(q / 10, extent) for q in q_lo:q_hi], [max(4, ceil(Int, 4 * q / 10)) for q in q_lo:q_hi],
+              c0, c1, q_lo)
+end
+@inline mz_kernel_index(mk::MzKernels, bin) =
+    clamp(round(Int, 10 * (mk.c0 + mk.c1 * bin)) - mk.q_lo + 1, 1, length(mk.ks))
+
+function centroid_slice!(out::FrameSlices, sc::SmoothScratch, lp::LevelParams, mk::MzKernels)
     bins = sc.sp_bin; vals = sc.sp_val; cnts = sc.sp_cnt
-    n = length(bins); gap_max = 2h_mz + 2
-    ntaps = length(kmz)
+    n = length(bins)
     i = 1
     @inbounds while i <= n
+        # the run's kernel: the one for its first bin (a run spans tens of bins; sigma changes < 0.1% across it)
+        ki = mz_kernel_index(mk, bins[i])
+        kmz = mk.ks[ki]; ntaps = length(kmz); h_mz = ntaps ÷ 2; gap_max = 2h_mz + 2
         # the run is bins[i:j]: extend while the next occupied bin is within gap_max
         j = i
         while j < n && bins[j + 1] - bins[j] <= gap_max; j += 1; end
@@ -74,7 +102,7 @@ function centroid_slice!(out::FrameSlices, sc::SmoothScratch, lp::LevelParams, k
                 dense[base + t] += kmz[t] * v
             end
         end
-        centroid_dense!(out, dense, dcnt, L, t0, lp, h_mz + 1, L - h_mz)
+        centroid_dense!(out, dense, dcnt, L, t0, lp, h_mz + 1, L - h_mz; max_half = mk.max_half[ki])
         i = j + 1
     end
     out

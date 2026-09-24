@@ -27,7 +27,7 @@ Options (defaults in brackets):
                              per run (stride rounded up)
   --stride K  --ms1-stride K  --im-sigma S  --ms1-im-sigma S   override in scans (default: derived as above)
   --kernel-extent E [3]  --no-sum-scale
-  --mz-sigma S [3]  --centroid wmean|gauss|none [wmean]  --max-half H [max(4, 4*mz-sigma)]
+  --mz-sigma S [3]  --mz-sigma-ppm P [off: sigma in ppm, bins derived per m/z]  --centroid wmean|gauss|none [wmean]  --max-half H [max(4, 4*mz-sigma)]
   --min-scans N [1]
   --max-peaks N [1500, 0 = off]  --ms1-max-peaks N [0]   keep the N most intense centroids per slice
   --bin-scale K [1]  --int-scale X [1]  --zstd-level L [3]  --format tdfs|arrow|both [tdfs]
@@ -40,7 +40,7 @@ function parse_cli(args::Vector{String})
     i = 3
     flags = Dict("--stride-k0" => (:stride_k0, Float64), "--im-sigma-k0" => (:im_sigma_k0, Float64),
                  "--im-sigma" => (:im_sigma, Float64), "--ms1-im-sigma" => (:ms1_im_sigma, Float64), "--kernel-extent" => (:kernel_extent, Float64),
-                 "--stride" => (:stride, Int), "--ms1-stride" => (:ms1_stride, Int), "--mz-sigma" => (:mz_sigma, Float64),
+                 "--stride" => (:stride, Int), "--ms1-stride" => (:ms1_stride, Int), "--mz-sigma" => (:mz_sigma, Float64), "--mz-sigma-ppm" => (:mz_sigma_ppm, Float64),
                  "--centroid" => (:centroid, Symbol), "--max-half" => (:max_half, Int),
                  "--min-scans" => (:min_scans, Int),
                  "--max-peaks" => (:max_peaks, Int), "--ms1-max-peaks" => (:ms1_max_peaks, Int),

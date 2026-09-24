@@ -59,8 +59,8 @@ For every bin `j` in `jlo:jhi`:
 Positions are fractional bins; `quantize!` rounds them to the stored fixed-point grid later.
 """
 function centroid_dense!(out::FrameSlices, sm::Vector{Float64}, cnt::Vector{Int32}, L::Int, t0::Int, lp::LevelParams,
-                         jlo::Int = 2, jhi::Int = L - 1)
-    max_half = lp.max_half; gauss = lp.centroid == :gauss; min_scans = lp.min_scans
+                         jlo::Int = 2, jhi::Int = L - 1; max_half::Int = lp.max_half)
+    gauss = lp.centroid == :gauss; min_scans = lp.min_scans
     jlo = max(2, jlo); jhi = min(L - 1, jhi)
     jlo > jhi && return out
     # `rise` = first bin of the strictly increasing positive stretch that ends at the current bin. Seed it for jlo

@@ -83,7 +83,8 @@ function convert(dir::AbstractString, out_dir::AbstractString; params::ConvertPa
     all(i -> 1 <= i <= n_frames(f) && (is_ms1(f, i) || is_dia(f, i)), rows) || throw(ArgumentError("frames must be rows of MS1 / diaPASEF frames"))
     @printf(log, "source %s: %d frames (%d MS1, %d MS2), %d raw peaks; mz cal residual ppm %s\n", basename(rstrip(dir, '/')), length(rows),
             count(i -> is_ms1(f, i), rows), count(i -> !is_ms1(f, i), rows), sum(Int, f.frames.num_peaks[rows]), string(round.(f.mz_cal_resid_ppm, digits = 2)))
-    ls1 = LevelSetup(level_params(p, true)); ls2 = LevelSetup(level_params(p, false))
+    ls1 = LevelSetup(level_params(p, true), p.mz_sigma_ppm, f.mz_cal, n_bins(f))
+    ls2 = LevelSetup(level_params(p, false), p.mz_sigma_ppm, f.mz_cal, n_bins(f))
     @printf(log, "IM scale: %.6f 1/K0 per scan -> stride %d scans (%s), IM sigma %.2f scans (%s)\n", abs(f.im_cal.slope),
             p.stride, params.stride === nothing ? "from $(p.stride_k0) 1/K0, rounded up" : "set explicitly",
             p.im_sigma, params.im_sigma === nothing ? "from $(p.im_sigma_k0) 1/K0" : "set explicitly")

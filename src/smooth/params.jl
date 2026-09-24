@@ -63,6 +63,7 @@ Base.@kwdef struct ConvertParams
     sum_scale::Bool = true
     # m/z kernel + centroid
     mz_sigma::Float64 = 3.0
+    mz_sigma_ppm::Float64 = 0.0      # > 0: m/z sigma constant in ppm (bins vary with m/z), replaces mz_sigma
     centroid::Symbol = :wmean
     max_half::Int = max(4, ceil(Int, 4 * mz_sigma))
     # culls
@@ -117,6 +118,7 @@ function validate(p::ConvertParams)
     p.kernel_extent > 0 || throw(ArgumentError("kernel_extent must be > 0"))
     all(x -> x === nothing || x >= 1, (p.stride, p.ms1_stride)) || throw(ArgumentError("stride must be >= 1"))
     p.mz_sigma >= 0 || throw(ArgumentError("mz_sigma must be >= 0"))
+    p.mz_sigma_ppm >= 0 || throw(ArgumentError("mz_sigma_ppm must be >= 0"))
     p.centroid in (:wmean, :gauss, :none) || throw(ArgumentError("centroid must be :wmean, :gauss or :none"))
     p.max_half >= 1 || throw(ArgumentError("max_half must be >= 1"))
     p.min_scans >= 1 || throw(ArgumentError("min_scans must be >= 1"))
@@ -140,7 +142,8 @@ IM sigma is written to two decimals (a sigma derived from 1/K0 is fractional).
 function output_name(source::AbstractString, p::ConvertParams)
     fmt(x) = (x = round(x; digits = 2); isinteger(x) ? string(Int(x)) : string(x))
     name = replace(basename(rstrip(source, '/')), r"\.d$" => "")
-    name *= "_cen_s$(fmt(p.im_sigma))_m$(fmt(p.mz_sigma))_k$(p.stride)_$(p.centroid)"
+    mz = p.mz_sigma_ppm > 0 ? "$(fmt(p.mz_sigma_ppm))ppm" : fmt(p.mz_sigma)
+    name *= "_cen_s$(fmt(p.im_sigma))_m$(mz)_k$(p.stride)_$(p.centroid)"
     p.sum_scale && (name *= "_sum")
     p.min_scans > 1 && (name *= "_n$(p.min_scans)")
     p.ms1_im_sigma != p.im_sigma && (name *= "_ms1s$(fmt(p.ms1_im_sigma))")
