@@ -72,15 +72,21 @@ end
 Convert a `.d` bundle. Returns the paths written (`nothing` for a format not requested).
 """
 function convert(dir::AbstractString, out_dir::AbstractString; params::ConvertParams = ConvertParams(),
-                 name::AbstractString = output_name(dir, params), log::IO = stdout, _fail_frames::Bool = false)
-    p = validate(params)
+                 name::Union{Nothing, AbstractString} = nothing, log::IO = stdout, _fail_frames::Bool = false)
+    validate(params)
     t_start = time()
     f = open_tdf(dir)
+    # IM scale in scans for this run's ramp (stride / sigma targets are in 1/K0 unless set explicitly)
+    p = validate(resolve_im_scale(params, f.im_cal.slope))
+    name === nothing && (name = output_name(dir, p))
     rows = p.frames === nothing ? valid_frames(f) : sort(p.frames)
     all(i -> 1 <= i <= n_frames(f) && (is_ms1(f, i) || is_dia(f, i)), rows) || throw(ArgumentError("frames must be rows of MS1 / diaPASEF frames"))
     @printf(log, "source %s: %d frames (%d MS1, %d MS2), %d raw peaks; mz cal residual ppm %s\n", basename(rstrip(dir, '/')), length(rows),
             count(i -> is_ms1(f, i), rows), count(i -> !is_ms1(f, i), rows), sum(Int, f.frames.num_peaks[rows]), string(round.(f.mz_cal_resid_ppm, digits = 2)))
     ls1 = LevelSetup(level_params(p, true)); ls2 = LevelSetup(level_params(p, false))
+    @printf(log, "IM scale: %.6f 1/K0 per scan -> stride %d scans (%s), IM sigma %.2f scans (%s)\n", abs(f.im_cal.slope),
+            p.stride, params.stride === nothing ? "from $(p.stride_k0) 1/K0, rounded up" : "set explicitly",
+            p.im_sigma, params.im_sigma === nothing ? "from $(p.im_sigma_k0) 1/K0" : "set explicitly")
     @printf(log, "params %s\n", string(Dict(p)))
 
     mz_lo = parse(Float64, f.meta["MzAcqRangeLower"]); mz_hi = parse(Float64, f.meta["MzAcqRangeUpper"])
@@ -92,6 +98,7 @@ function convert(dir::AbstractString, out_dir::AbstractString; params::ConvertPa
         "NumScans" => f.max_scans, "n_bins" => n_bins(f), "mz_lo" => mz_lo, "mz_hi" => mz_hi,
         "OneOverK0AcqRangeLower" => f.meta["OneOverK0AcqRangeLower"], "OneOverK0AcqRangeUpper" => f.meta["OneOverK0AcqRangeUpper"],
         "params" => Dict(p),
+        "stride_explicit" => params.stride !== nothing, "im_sigma_explicit" => params.im_sigma !== nothing,
         "bin_scale" => p.bin_scale, "int_scale" => p.int_scale, "zstd_level" => p.zstd_level,
         "converter" => "TimsSlices.jl $(pkgversion(TimsSlices))", "converted_at" => string(now_utc()))
     mkpath(out_dir)

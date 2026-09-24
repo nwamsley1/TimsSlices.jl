@@ -1,6 +1,6 @@
 name = "TimsSlices"
 uuid = "7d3f1c2a-5b8e-4f61-9c0d-2a6e8b4f1d37"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Nathan Wamsley"]
 
 [deps]

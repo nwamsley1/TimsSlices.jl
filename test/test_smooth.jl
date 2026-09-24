@@ -190,7 +190,7 @@ end
     smooth_window!(out, sc, buf, 0, 32, 1, LevelSetup(lp(mz_sigma = 1.0, max_peaks = 5)))
     @test all(j -> out.ptr[j+1] - out.ptr[j] == 5, 1:out.n_slices)
     @test all(j -> all(p -> p > 1000 + 20 * 25 - 1, out.pos[out.ptr[j]:out.ptr[j+1]-1]), 1:out.n_slices)   # the 5 brightest ions
-    @test output_name("r.d", ConvertParams(max_peaks = 1000)) == "r_cen_s5_m3_k8_wmean_sum_top1000"
+    @test output_name("r.d", TS.resolve_im_scale(ConvertParams(max_peaks = 1000), 0.000865)) == "r_cen_s5_m3_k8_wmean_sum_top1000"
     # the cap must not disturb the m/z-stage buffers: a wide slice (many peaks) capped, then a long run
     # (regression: the cap once grew sc.dense past sc.dcnt and a later run wrote out of bounds)
     @test length(sc.dense) == length(sc.dcnt)
@@ -202,14 +202,52 @@ end
 
 @testset "params" begin
     p = ConvertParams()
-    @test p.max_half == 12 && p.ms1_stride == 8 && p.max_peaks == 1500 && p.ms1_max_peaks == 0
+    # the IM scale is left to resolve_im_scale (1/K0 targets); overrides unset
+    @test p.stride === nothing && p.ms1_stride === nothing && p.im_sigma === nothing && p.ms1_im_sigma === nothing
+    @test p.stride_k0 == TS.STRIDE_K0 == 0.0065 && p.im_sigma_k0 == TS.IM_SIGMA_K0 == 0.004325
+    @test p.max_half == 12 && p.max_peaks == 1500 && p.ms1_max_peaks == 0
     @test ConvertParams(mz_sigma = 1.0).max_half == 4
     @test_throws ArgumentError TS.validate(ConvertParams(centroid = :apex))
     @test_throws ArgumentError TS.validate(ConvertParams(bin_scale = 0))
     @test_throws ArgumentError TS.validate(ConvertParams(format = :csv))
-    @test output_name("x/run.d", ConvertParams()) == "run_cen_s5_m3_k8_wmean_sum_top1500"
-    @test output_name("run.d", ConvertParams(max_peaks = 0, bin_scale = 256, min_scans = 3)) == "run_cen_s5_m3_k8_wmean_sum_n3_b256"
+    r(p) = TS.resolve_im_scale(p, 0.000865)
+    @test output_name("x/run.d", r(ConvertParams())) == "run_cen_s5_m3_k8_wmean_sum_top1500"
+    @test output_name("run.d", r(ConvertParams(max_peaks = 0, bin_scale = 256, min_scans = 3))) == "run_cen_s5_m3_k8_wmean_sum_n3_b256"
+    # a derived fractional sigma is written to two decimals
+    @test output_name("run.d", TS.resolve_im_scale(ConvertParams(), 0.00085)) == "run_cen_s5.09_m3_k8_wmean_sum_top1500"
+    @test_throws ArgumentError TS.validate(ConvertParams(stride = 0))
+    @test_throws ArgumentError TS.validate(ConvertParams(stride_k0 = 0.0))
     p2, _ = TS.parse_cli(["a.d", "out", "--mz-sigma", "2", "--centroid", "none", "--no-sum-scale", "--frames", "1:10", "--format", "both"])
     @test p2.mz_sigma == 2.0 && p2.centroid == :none && !p2.sum_scale && p2.frames == collect(1:10) && p2.format == :both
     @test_throws ErrorException TS.parse_cli(["a.d", "out", "--bogus", "1"])
+    # IM scale flags: 1/K0 targets, or scan overrides
+    p3, _ = TS.parse_cli(["a.d", "out", "--stride-k0", "0.013", "--im-sigma-k0", "0.005"])
+    @test p3.stride_k0 == 0.013 && p3.im_sigma_k0 == 0.005 && p3.stride === nothing
+    p4, _ = TS.parse_cli(["a.d", "out", "--stride", "8", "--im-sigma", "5"])
+    @test p4.stride == 8 && p4.im_sigma == 5.0
+end
+
+@testset "IM scale from 1/K0 (resolve_im_scale)" begin
+    res(slope; kw...) = TS.resolve_im_scale(ConvertParams(; kw...), slope)
+    # stride = ceil(0.0065 / slope), sigma = 0.004325 / slope to 0.01 scan; the sign of the slope is ignored
+    for (slope, stride, sigma) in ((0.81 / 936, 8, 5.0),      # timsTOF Ultra 2, 0.64-1.45 over 936 scans (4.998 -> 5.00)
+                                   (0.81 / 953, 8, 5.09),      # timsTOF Ultra, 953 scans: 7.65 -> 8
+                                   (1.0 / 927, 7, 4.01),       # timsTOF Pro, 0.60-1.60 over 927 scans: 6.03 -> 7
+                                   (0.45 / 930, 14, 8.94))     # a narrow 0.85-1.30 ramp: 13.4 -> 14
+        p = res(-slope)
+        @test p.stride == p.ms1_stride == stride
+        @test p.im_sigma == sigma && p.ms1_im_sigma == p.im_sigma
+    end
+    # rounding up, with float noise at an exact multiple ignored: 0.0068 / 0.00085 = 8 exactly -> 8, not 9
+    @test TS.stride_scans(0.0068, 0.00085) == 8 && TS.stride_scans(0.0069, 0.00085) == 9
+    @test TS.stride_scans(0.0001, 0.001) == 1
+    # explicit values (scans) override; MS1 follows MS2 unless set itself
+    p = res(0.001079; stride = 8, im_sigma = 5.0)
+    @test (p.stride, p.ms1_stride, p.im_sigma, p.ms1_im_sigma) == (8, 8, 5.0, 5.0)
+    p = res(0.000865; ms1_stride = 16)
+    @test (p.stride, p.ms1_stride) == (8, 16)
+    @test res(0.000865; stride_k0 = 0.013).stride == 16
+    # a missing slope is an error only when something has to be derived from it
+    @test_throws ArgumentError res(0.0)
+    @test res(0.0; stride = 8, im_sigma = 5.0).stride == 8
 end

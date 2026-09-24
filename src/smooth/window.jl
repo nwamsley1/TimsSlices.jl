@@ -18,11 +18,13 @@
 # The per-window pipeline: slices every `stride` scans of window scans s0:s1-1 of one decoded frame.
 #
 # A diaPASEF frame is one TIMS ramp: ~930 IM scans, each a TOF spectrum. Its quad windows each cover a range of
-# those scans. For every window the converter produces "slices", one every `stride` (8) scans, each a centroided
+# those scans. For every window the converter produces "slices", one every `stride` scans (0.0065 1/K0 by default,
+# 8 scans on the timsTOF Ultra ramps; see STRIDE_K0), each a centroided
 # spectrum that Pioneer searches as one scan. Per slice:
 #
 #   1. IM accumulation (im.jl)    Gaussian-weighted sum of the raw scans around the slice centre, per TOF bin
-#                                 (sigma 5 scans): the ion's signal over its mobility peak, in one spectrum.
+#                                 (sigma 0.004325 1/K0, 5 scans on the Ultra ramps): the ion's signal over its
+#                                 mobility peak, in one spectrum.
 #   2. m/z smoothing (mz.jl)      Gaussian along the TOF axis (sigma 3 bins): merges the +/-1-2 bin jitter of an
 #                                 ion across scans into one hump.
 #   3. peak picking (centroid.jl) local maxima, footprint walk, weighted-mean position, footprint-sum intensity,
