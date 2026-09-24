@@ -125,7 +125,7 @@ if BIG
             isdir(dpath) || (@warn "missing $dpath"; continue)
             f = open_tdf(dpath)
             sel = vcat(sample_rows(f, true, 10), sample_rows(f, false, 10))
-            n, dpos, dint = check_equivalence(dpath, sel, ConvertParams(max_peaks = 0), Ref.CParams(5.0, 3.0, 8, 0.0, :wmean, 12, true, 1))
+            n, dpos, dint = check_equivalence(dpath, sel, ConvertParams(max_peaks = 0, stride = 8, im_sigma = 5.0), Ref.CParams(5.0, 3.0, 8, 0.0, :wmean, 12, true, 1))
             @test n > 1_000_000 && dpos == 0.0 && dint < 1e-6
         end
     end
@@ -146,6 +146,9 @@ end
     @test isdir(paths.tdfs) && isfile(paths.arrow)
     t = open_tdfs(paths.tdfs)
     @test n_frames(t) == 120 && t.bin_scale == 2 && t.int_scale == 16 && t.meta["params"]["max_peaks"] == 200
+    # IM scale derived from this timsTOF Pro run's ramp (0.60-1.60 over 927 scans): 7 scans, sigma ~4.01
+    @test t.meta["params"]["stride"] == 7 && t.meta["params"]["im_sigma"] == 4.01
+    @test t.meta["stride_explicit"] == false && t.meta["im_sigma_explicit"] == false
     @test t.frames.ms_order[1] == 0x01 && t.frames.cycle_idx[1] == 1 && t.frames.cycle_idx[10] == 2
     # slices table consistent with frames table and blocks
     @test sum(t.frames.n_slices) == n_slices(t)

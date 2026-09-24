@@ -23,7 +23,10 @@ tims_convert.jl <run.d> <out_dir> [options]      convert a .d bundle
 tims_convert.jl expand <name.tdfs> <out.arrow>   expand a tdfs into Pioneer's slice Arrow
 
 Options (defaults in brackets):
-  --im-sigma S [5]  --ms1-im-sigma S  --kernel-extent E [3]  --stride K [8]  --ms1-stride K  --no-sum-scale
+  --stride-k0 X [0.0065]  --im-sigma-k0 X [0.004325]   slice spacing / IM kernel sigma in 1/K0, converted to scans
+                             per run (stride rounded up)
+  --stride K  --ms1-stride K  --im-sigma S  --ms1-im-sigma S   override in scans (default: derived as above)
+  --kernel-extent E [3]  --no-sum-scale
   --mz-sigma S [3]  --centroid wmean|gauss|none [wmean]  --max-half H [max(4, 4*mz-sigma)]
   --min-scans N [1]
   --max-peaks N [1500, 0 = off]  --ms1-max-peaks N [0]   keep the N most intense centroids per slice
@@ -35,7 +38,8 @@ function parse_cli(args::Vector{String})
     length(args) >= 2 || (println(CLI_HELP); error("not enough arguments"))
     kw = Dict{Symbol, Any}(); name = nothing
     i = 3
-    flags = Dict("--im-sigma" => (:im_sigma, Float64), "--ms1-im-sigma" => (:ms1_im_sigma, Float64), "--kernel-extent" => (:kernel_extent, Float64),
+    flags = Dict("--stride-k0" => (:stride_k0, Float64), "--im-sigma-k0" => (:im_sigma_k0, Float64),
+                 "--im-sigma" => (:im_sigma, Float64), "--ms1-im-sigma" => (:ms1_im_sigma, Float64), "--kernel-extent" => (:kernel_extent, Float64),
                  "--stride" => (:stride, Int), "--ms1-stride" => (:ms1_stride, Int), "--mz-sigma" => (:mz_sigma, Float64),
                  "--centroid" => (:centroid, Symbol), "--max-half" => (:max_half, Int),
                  "--min-scans" => (:min_scans, Int),
