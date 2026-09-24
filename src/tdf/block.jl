@@ -16,6 +16,17 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 # Raw codec-2 frame block: zstd -> byte planes -> word stream -> per-scan prefix sums.
+#
+# Bruker's layout (TimsCompressionType 2), as decoded here. A frame block in analysis.tdf_bin is an 8-byte header
+# (UInt32 block size, UInt32 scan count) followed by a zstd payload. Decompressed, the payload is 4n bytes of
+# byte planes (see codec/planes.jl) holding n = NumScans + 2 * NumPeaks little-endian UInt32 words:
+#
+#   word 1                    NumScans
+#   words 2 .. NumScans       2 x (peaks in scan s), for s = 0 .. NumScans-2 (the last scan gets the remainder)
+#   then, scan by scan,       (tof_delta, intensity) pairs
+#
+# Within a scan the TOF bin is a running sum of the deltas, starting from -1 (0xFFFFFFFF, wrapping), so the
+# first delta of every scan is its first bin + 1. Peaks within a scan are in increasing TOF order.
 
 "Decoded peaks of one raw frame, per-thread scratch sized to the file's largest frame."
 mutable struct FrameBuffer
@@ -59,6 +70,7 @@ function decode_codec2!(buf::FrameBuffer, payload::AbstractVector{UInt8}, n_scan
     end
     ss[n_scans + 1] = Int32(n_peaks + 1)
     ss[n_scans] <= ss[n_scans + 1] || error("scan headers exceed NumPeaks ($(ss[n_scans] - 1) > $n_peaks)")
+    # peak pairs: the TOF bin is the running sum of the deltas, restarting at -1 (typemax, wrapping) every scan
     tof = buf.tof; it = buf.intensity
     pos = n_scans + 1
     @inbounds for s in 0:n_scans-1

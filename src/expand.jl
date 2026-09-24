@@ -25,8 +25,10 @@ function expand(tdfs_dir::AbstractString, arrow_path::AbstractString; log::IO = 
     t = open_tdfs(tdfs_dir)
     meta = t.meta
     pd = meta["params"]
-    p = ConvertParams(; (Symbol(k) => (k in ("centroid", "format") ? Symbol(v) : k == "frames" ? nothing : v) for (k, v) in pd)...)
-    aw = SliceArrowWriter(arrow_path, arrow_metadata(meta, p, Float64(meta["cull_thr_ms1"]), Float64(meta["cull_thr_ms2"])),
+    # Parameters a later TimsSlices no longer has (e.g. the quantile culls, removed in 0.1) are ignored.
+    p = ConvertParams(; (Symbol(k) => (k in ("centroid", "format") ? Symbol(v) : k == "frames" ? nothing : v)
+                         for (k, v) in pd if Symbol(k) in fieldnames(ConvertParams))...)
+    aw = SliceArrowWriter(arrow_path, arrow_metadata(meta, p),
                           t.mz_cal, t.bin_scale, t.int_scale, Float64(meta["mz_lo"]), Float64(meta["mz_hi"]))
     blk = SliceBlock(); codec = BlockCodec(); rows = SliceRows()
     fr = t.frames; sl = t.slices

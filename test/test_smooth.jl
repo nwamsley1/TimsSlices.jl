@@ -32,8 +32,8 @@ function make_frame(scans::Vector{Vector{Tuple{Int, Int}}})
     buf
 end
 
-lp(; im_sigma = 5.0, extent = 3.0, stride = 8, sum_scale = true, mz_sigma = 3.0, centroid = :wmean, max_half = 12, cull_q = 0.0, min_scans = 1, max_peaks = 0) =
-    LevelParams(im_sigma, extent, stride, sum_scale, mz_sigma, centroid, max_half, cull_q, min_scans, max_peaks)
+lp(; im_sigma = 5.0, extent = 3.0, stride = 8, sum_scale = true, mz_sigma = 3.0, centroid = :wmean, max_half = 12, min_scans = 1, max_peaks = 0) =
+    LevelParams(im_sigma, extent, stride, sum_scale, mz_sigma, centroid, max_half, min_scans, max_peaks)
 
 @testset "kernels" begin
     @test gauss_kernel(0.0) == [1.0]
@@ -74,12 +74,12 @@ end
 end
 
 "Run the m/z stage + centroiding on one sparse slice (bins, values, counts)."
-function centroid_sparse(bins, vals, cnts, l::LevelParams; thr = 0.0)
+function centroid_sparse(bins, vals, cnts, l::LevelParams)
     sc = SmoothScratch()
     append!(sc.sp_bin, Int32.(bins)); append!(sc.sp_val, Float64.(vals)); append!(sc.sp_cnt, Int32.(cnts))
     out = FrameSlices()
     kmz = TS.mz_kernel(l)
-    TS.centroid_slice!(out, sc, l, kmz, length(kmz) ÷ 2, thr)
+    TS.centroid_slice!(out, sc, l, kmz, length(kmz) ÷ 2)
     collect(zip(out.pos, out.val))
 end
 
@@ -106,9 +106,7 @@ end
     c = centroid_sparse([1000], [10.0], [1], l1)
     k = gauss_kernel(1.0); h = length(k) ÷ 2
     @test length(c) == 1 && c[1][2] ≈ 10.0 * (k[h] + k[h+1] + k[h+2])
-    # threshold cull and min_scans cull
-    @test isempty(centroid_sparse([1000], [10.0], [1], l; thr = 10.1))
-    @test length(centroid_sparse([1000], [10.0], [1], l; thr = 9.999)) == 1
+    # min_scans cull
     @test isempty(centroid_sparse([1000], [10.0], [2], lp(mz_sigma = 1.0, max_half = 4, min_scans = 3)))
     @test length(centroid_sparse([1000, 1001], [10.0, 1.0], [2, 1], lp(mz_sigma = 1.0, max_half = 4, min_scans = 3))) == 1
     # gauss apex on a sampled Gaussian recovers the offset
@@ -119,7 +117,7 @@ end
     # variant A emits the sparse bins themselves
     out = FrameSlices(); sc = SmoothScratch()
     append!(sc.sp_bin, Int32[5, 9]); append!(sc.sp_val, [1.0, 0.4]); append!(sc.sp_cnt, Int32[2, 1])
-    TS.emit_sparse!(out, sc, 0.5, 1)
+    TS.emit_sparse!(out, sc, 2)
     @test out.pos == [5.0] && out.val == [1.0]
 end
 
@@ -134,7 +132,7 @@ end
     end
     buf = make_frame(scans)
     l = lp(im_sigma = 5.0, stride = 8, mz_sigma = 3.0)
-    ls = LevelSetup(l, 0.0)
+    ls = LevelSetup(l)
     out = FrameSlices(); sc = SmoothScratch(); TS.ensure_bins!(sc, 10_000)
     smooth_window!(out, sc, buf, 0, 64, 1, ls)
     # slices at 0, 8, 16, 24, 32, 40, 48, 56; 56 is out of reach of both ions (kernel half-width 15 -> reaches 41.. no: 56-15 = 41 -> in reach of 9000)
@@ -167,7 +165,7 @@ end
 
     # stride 1 without sum scaling: per-scan average intensity of the constant ion is 100
     l2 = lp(im_sigma = 5.0, stride = 1, sum_scale = false, mz_sigma = 3.0)
-    TS.reset!(out); smooth_window!(out, sc, buf, 0, 64, 1, LevelSetup(l2, 0.0))
+    TS.reset!(out); smooth_window!(out, sc, buf, 0, 64, 1, LevelSetup(l2))
     j = findfirst(==(15), out.scan); r = out.ptr[j]:out.ptr[j+1]-1
     @test out.val[r][argmin(abs.(out.pos[r] .- 5000))] ≈ 100 atol = 1e-6
 end
@@ -189,29 +187,28 @@ end
         push!(scans, [(1000 + 20i, 10 + i) for i in 1:30])      # 30 ions, intensities 11..40
     end
     buf = make_frame(scans); sc = SmoothScratch(); TS.ensure_bins!(sc, 10_000); out = FrameSlices()
-    smooth_window!(out, sc, buf, 0, 32, 1, LevelSetup(lp(mz_sigma = 1.0, max_peaks = 5), 0.0))
+    smooth_window!(out, sc, buf, 0, 32, 1, LevelSetup(lp(mz_sigma = 1.0, max_peaks = 5)))
     @test all(j -> out.ptr[j+1] - out.ptr[j] == 5, 1:out.n_slices)
     @test all(j -> all(p -> p > 1000 + 20 * 25 - 1, out.pos[out.ptr[j]:out.ptr[j+1]-1]), 1:out.n_slices)   # the 5 brightest ions
-    @test output_name("r.d", ConvertParams(max_peaks = 1000)) == "r_cen_s5_m3_k8_q0_wmean_sum_top1000"
+    @test output_name("r.d", ConvertParams(max_peaks = 1000)) == "r_cen_s5_m3_k8_wmean_sum_top1000"
     # the cap must not disturb the m/z-stage buffers: a wide slice (many peaks) capped, then a long run
     # (regression: the cap once grew sc.dense past sc.dcnt and a later run wrote out of bounds)
     @test length(sc.dense) == length(sc.dcnt)
     wide = [[(500 + 3i, 100 + i) for i in 1:4000] for _ in 1:8]          # 4000 peaks per scan, 3 bins apart (one long run), distinct intensities
     buf2 = make_frame(wide); TS.reset!(out); TS.ensure_bins!(sc, 20_000)
-    smooth_window!(out, sc, buf2, 0, 8, 1, LevelSetup(lp(mz_sigma = 1.0, stride = 8, max_peaks = 100), 0.0))
+    smooth_window!(out, sc, buf2, 0, 8, 1, LevelSetup(lp(mz_sigma = 1.0, stride = 8, max_peaks = 100)))
     @test length(sc.dense) == length(sc.dcnt) && out.n_slices == 1 && length(out.pos) == 100
 end
 
 @testset "params" begin
     p = ConvertParams()
-    @test p.max_half == 12 && p.ms1_stride == 8 && p.ms1_cull_q == 0.0 && !p.split_cull
-    @test ConvertParams(cull_q = 0.05, ms1_cull_q = 0.0).split_cull
+    @test p.max_half == 12 && p.ms1_stride == 8 && p.max_peaks == 1500 && p.ms1_max_peaks == 0
     @test ConvertParams(mz_sigma = 1.0).max_half == 4
     @test_throws ArgumentError TS.validate(ConvertParams(centroid = :apex))
     @test_throws ArgumentError TS.validate(ConvertParams(bin_scale = 0))
     @test_throws ArgumentError TS.validate(ConvertParams(format = :csv))
-    @test output_name("x/run.d", ConvertParams()) == "run_cen_s5_m3_k8_q0_wmean_sum"
-    @test output_name("run.d", ConvertParams(cull_q = 0.05, ms1_cull_q = 0.0, bin_scale = 256, min_scans = 3)) == "run_cen_s5_m3_k8_q0.05_wmean_sum_n3_ms1q0_b256"
+    @test output_name("x/run.d", ConvertParams()) == "run_cen_s5_m3_k8_wmean_sum_top1500"
+    @test output_name("run.d", ConvertParams(max_peaks = 0, bin_scale = 256, min_scans = 3)) == "run_cen_s5_m3_k8_wmean_sum_n3_b256"
     p2, _ = TS.parse_cli(["a.d", "out", "--mz-sigma", "2", "--centroid", "none", "--no-sum-scale", "--frames", "1:10", "--format", "both"])
     @test p2.mz_sigma == 2.0 && p2.centroid == :none && !p2.sum_scale && p2.frames == collect(1:10) && p2.format == :both
     @test_throws ErrorException TS.parse_cli(["a.d", "out", "--bogus", "1"])

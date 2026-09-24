@@ -17,6 +17,10 @@
 
 # Byte transposition: n UInt32 words <-> four byte planes of length n (plane p holds byte p of every word).
 # Bruker's layout, and ours. Both loops are plain SIMD loops (widen/shift/or, narrowing stores).
+#
+# Why: the words are mostly small numbers (bin deltas, intensities), so their high bytes are nearly all zero.
+# Stored word by word, those zeros are interleaved with the busy low bytes; stored plane by plane, the high planes
+# become long runs of zeros and near-zeros that zstd compresses to almost nothing.
 
 """
     untranspose!(words, planes, n)

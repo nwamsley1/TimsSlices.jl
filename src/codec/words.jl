@@ -18,6 +18,8 @@
 # Word streams (our format, see docs/format.md). A slice's block is 2 * n_peaks words, (bin_delta, intensity) per
 # peak; bin_delta is the fixed-point bin minus the previous peak's bin in the slice, the accumulator starting at
 # 0xFFFFFFFF (so the first delta is bin + 1). The peak count lives in the slice table, not in the stream.
+# Why deltas: peaks are sorted by bin, so consecutive differences are small (tens to hundreds of bins) where the
+# bins themselves are up to ~640,000; small words leave the high byte planes almost empty (see planes.jl).
 # `SliceBlock` is the in-memory form of one frame's slices (ptr / bin / intensity); the *frame* word stream
 # (`encode_words!` / `decode_words!`: [n_slices, counts..., pairs...]) is kept for tests and in-memory round trips.
 

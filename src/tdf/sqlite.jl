@@ -88,7 +88,17 @@ end
 @inline bin_to_mz(c::LinearMzCal, bin) = (c.intercept + c.slope * bin)^2
 @inline mz_to_bin(c::LinearMzCal, mz) = (sqrt(mz) - c.intercept) / c.slope
 
-"Least squares on the CalibrationInfo reference peaks (exact on timsControl files)."
+"""
+Least squares on the CalibrationInfo reference peaks (exact on timsControl files).
+
+In a TOF analyser the flight time grows with the square root of m/z, so `sqrt(m/z)` is linear in the TOF bin.
+timsControl stores the calibrant peaks it fitted: their masses (`ReferencePeakMasses`) and measured flight times
+(`MeasuredTimesOfFlight`, in ns). A flight time becomes a bin as `(t - DigitizerDelay) / DigitizerTimebase`; a
+straight-line fit of `sqrt(mass)` on bin then gives the file's calibration. It reproduces Bruker's own m/z to
+within 0-2 ppm on the files checked; the model built from the acquisition range alone (`MzAcqRange` and the
+digitizer sample count) is off by -20..+7 ppm, which is why it is not used. Returns the line and each reference
+peak's residual in ppm.
+"""
 function regressed_mz_cal(db::SQLite.DB, mzcal_id::Integer)
     function blob(key)
         r = first(DBInterface.execute(db, "SELECT Value FROM CalibrationInfo WHERE KeyPolarity='+' AND KeyName='$key'"))
@@ -106,7 +116,13 @@ function regressed_mz_cal(db::SQLite.DB, mzcal_id::Integer)
     LinearMzCal(a, b), resid_ppm
 end
 
-"1/K0 = intercept + slope · scan (boundary model; the search refits its own line)."
+"""
+1/K0 = intercept + slope · scan (boundary model; the search refits its own line).
+
+The TIMS ramp runs from high to low mobility, so scan 0 is `OneOverK0AcqRangeUpper` and the last scan
+`OneOverK0AcqRangeLower`, linearly in between. This is the nominal ramp, not a fitted calibration (it was ~4% off
+in slope on one timsTOF Pro file); Pioneer only uses the slope, to turn 1/K0 widths into scan counts.
+"""
 struct LinearImCal
     intercept::Float64
     slope::Float64
@@ -117,7 +133,13 @@ function boundary_im_cal(meta::Dict{String, String}, frames::FrameTable)
     LinearImCal(hi, (lo - hi) / maximum(frames.num_scans))
 end
 
-"Collision energy ramp eV = intercept + slope · scan, fit to the window table's mid-scan values."
+"""
+Collision energy ramp eV = intercept + slope · scan, fit to the window table's mid-scan values.
+
+diaPASEF ramps the collision energy with mobility. The window table stores one energy per window, the ramp's
+value at the window's middle scan; a line through those points recovers the ramp, so each slice can be given the
+energy at its own scan rather than its window's average.
+"""
 struct CeRamp
     intercept::Float64
     slope::Float64
