@@ -1,3 +1,20 @@
+# Copyright (C) 2026 Nathan Wamsley
+#
+# This file is part of TimsSlices.jl
+#
+# TimsSlices.jl is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 # Prototype pure-Julia reader for Bruker timsTOF .d (TDF) bundles.
 #
 # Format references (all open-source, no Bruker SDK):
@@ -5,7 +22,7 @@
 #   - alphatims 1.0.8 bruker.py (process_frame, parse_decompressed_bruker_binary_type2)
 #   - timsrust crates/timsrust-tdf/src/calibration.rs
 #
-# Usage:  julia --project=/Users/n.t.wamsley/BrukerTims/proto tdf_reader.jl <run.d> [max_frames]
+# Usage:  julia --project=<env with SQLite, CodecZstd> tdf_reader.jl <run.d> [max_frames]
 
 using SQLite, DataFrames, CodecZstd
 

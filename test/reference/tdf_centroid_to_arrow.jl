@@ -1,3 +1,20 @@
+# Copyright (C) 2026 Nathan Wamsley
+#
+# This file is part of TimsSlices.jl
+#
+# TimsSlices.jl is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 # Bruker TDF (.d) -> Pioneer Arrow with IM smoothing + m/z centroiding per window, one row per kept IM slice.
 #
 #   For every frame and DIA window (MS1: the whole frame), output slices at scans s0, s0+stride, ... :
