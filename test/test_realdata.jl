@@ -53,6 +53,7 @@ end
 "Compare the new pipeline with the prototype on `sel` frame rows of `dpath` with the given parameters."
 function check_equivalence(dpath, sel, p::ConvertParams, rp)
     f = open_tdf(dpath)
+    p = TimsSlices.resolve_mz_scale(p, f.timebase_ns)
     ls1 = LevelSetup(level_params(p, true)); ls2 = LevelSetup(level_params(p, false))
     buf = FrameBuffer(); sc = SmoothScratch(); out = FrameSlices()
     rb = Ref.open_tdf(dpath); groups, frame_group = Ref.read_windows(rb.db)
@@ -125,7 +126,7 @@ if BIG
             isdir(dpath) || (@warn "missing $dpath"; continue)
             f = open_tdf(dpath)
             sel = vcat(sample_rows(f, true, 10), sample_rows(f, false, 10))
-            n, dpos, dint = check_equivalence(dpath, sel, ConvertParams(max_peaks = 0, stride = 8, im_sigma = 5.0), Ref.CParams(5.0, 3.0, 8, 0.0, :wmean, 12, true, 1))
+            n, dpos, dint = check_equivalence(dpath, sel, ConvertParams(max_peaks = 0, stride = 8, im_sigma = 5.0, mz_sigma = 3.0), Ref.CParams(5.0, 3.0, 8, 0.0, :wmean, 12, true, 1))
             @test n > 1_000_000 && dpos == 0.0 && dint < 1e-6
         end
     end
@@ -149,6 +150,9 @@ end
     # IM scale derived from this timsTOF Pro run's ramp (0.60-1.60 over 927 scans): 7 scans, sigma ~4.01
     @test t.meta["params"]["stride"] == 7 && t.meta["params"]["im_sigma"] == 4.01
     @test t.meta["stride_explicit"] == false && t.meta["im_sigma_explicit"] == false
+    # m/z sigma from this timsTOF Pro run's 0.2 ns digitizer: 0.28125 ns -> 1.41 bins
+    @test t.meta["params"]["mz_sigma"] == 1.41 && t.meta["params"]["max_half"] == 6
+    @test t.meta["digitizer_timebase_ns"] ≈ 0.2 && t.meta["mz_sigma_explicit"] == false
     @test t.frames.ms_order[1] == 0x01 && t.frames.cycle_idx[1] == 1 && t.frames.cycle_idx[10] == 2
     # slices table consistent with frames table and blocks
     @test sum(t.frames.n_slices) == n_slices(t)

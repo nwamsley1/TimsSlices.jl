@@ -21,7 +21,8 @@
 # integer TOF bin), but an ion's bin jitters by +/-1-2 between neighbouring IM scans (E. coli, strongest peaks:
 # same bin in the next scan 21%, +/-1 33%, +/-2 16%). After the IM sum, one ion is therefore spread over 2-4
 # adjacent bins with a ragged profile, which a peak picker would split into several centroids. A Gaussian of
-# `mz_sigma` bins (3 by default) turns it into one smooth hump with one apex; the weighted-mean position keeps
+# `mz_sigma` bins (0.28125 ns of flight time by default: 2.25 bins on the timsTOF Ultra, 1.41 on the Pro; see
+# MZ_SIGMA_NS) turns it into one smooth hump with one apex; the weighted-mean position keeps
 # the m/z sharp (0.2-0.7 ppm reproducibility across slices, 3-5 ppm without the kernel).
 # Measured (2026-09-16/18): no m/z kernel -24% IDs; sigma 3 vs 1 +2.6% (E. coli 50 ng) and +6.7% (human 250 pg)
 # at 1% FDR, with ~30% smaller files. Cost: ions closer than ~2 sigma (6 bins, ~25 ppm at m/z 500) merge.

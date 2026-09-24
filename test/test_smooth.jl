@@ -190,7 +190,7 @@ end
     smooth_window!(out, sc, buf, 0, 32, 1, LevelSetup(lp(mz_sigma = 1.0, max_peaks = 5)))
     @test all(j -> out.ptr[j+1] - out.ptr[j] == 5, 1:out.n_slices)
     @test all(j -> all(p -> p > 1000 + 20 * 25 - 1, out.pos[out.ptr[j]:out.ptr[j+1]-1]), 1:out.n_slices)   # the 5 brightest ions
-    @test output_name("r.d", TS.resolve_im_scale(ConvertParams(max_peaks = 1000), 0.000865)) == "r_cen_s5_m3_k8_wmean_sum_top1000"
+    @test output_name("r.d", TS.resolve_mz_scale(TS.resolve_im_scale(ConvertParams(max_peaks = 1000), 0.000865), 0.125)) == "r_cen_s5_m2.25_k8_wmean_sum_top1000"
     # the cap must not disturb the m/z-stage buffers: a wide slice (many peaks) capped, then a long run
     # (regression: the cap once grew sc.dense past sc.dcnt and a later run wrote out of bounds)
     @test length(sc.dense) == length(sc.dcnt)
@@ -205,18 +205,20 @@ end
     # the IM scale is left to resolve_im_scale (1/K0 targets); overrides unset
     @test p.stride === nothing && p.ms1_stride === nothing && p.im_sigma === nothing && p.ms1_im_sigma === nothing
     @test p.stride_k0 == TS.STRIDE_K0 == 0.0065 && p.im_sigma_k0 == TS.IM_SIGMA_K0 == 0.004325
-    @test p.max_half == 12 && p.max_peaks == 1500 && p.ms1_max_peaks == 0
-    @test ConvertParams(mz_sigma = 1.0).max_half == 4
+    # the m/z sigma is left to resolve_mz_scale (ns target)
+    @test p.mz_sigma === nothing && p.max_half === nothing && p.mz_sigma_ns == TS.MZ_SIGMA_NS == 0.28125
+    @test p.max_peaks == 1500 && p.ms1_max_peaks == 0
     @test_throws ArgumentError TS.validate(ConvertParams(centroid = :apex))
     @test_throws ArgumentError TS.validate(ConvertParams(bin_scale = 0))
     @test_throws ArgumentError TS.validate(ConvertParams(format = :csv))
-    r(p) = TS.resolve_im_scale(p, 0.000865)
-    @test output_name("x/run.d", r(ConvertParams())) == "run_cen_s5_m3_k8_wmean_sum_top1500"
-    @test output_name("run.d", r(ConvertParams(max_peaks = 0, bin_scale = 256, min_scans = 3))) == "run_cen_s5_m3_k8_wmean_sum_n3_b256"
+    r(p; timebase = 0.125) = TS.resolve_mz_scale(TS.resolve_im_scale(p, 0.000865), timebase)
+    @test output_name("x/run.d", r(ConvertParams())) == "run_cen_s5_m2.25_k8_wmean_sum_top1500"
+    @test output_name("run.d", r(ConvertParams(max_peaks = 0, bin_scale = 256, min_scans = 3, mz_sigma = 3.0))) == "run_cen_s5_m3_k8_wmean_sum_n3_b256"
     # a derived fractional sigma is written to two decimals
-    @test output_name("run.d", TS.resolve_im_scale(ConvertParams(), 0.00085)) == "run_cen_s5.09_m3_k8_wmean_sum_top1500"
+    @test output_name("run.d", TS.resolve_mz_scale(TS.resolve_im_scale(ConvertParams(), 0.00085), 0.2)) == "run_cen_s5.09_m1.41_k8_wmean_sum_top1500"
     @test_throws ArgumentError TS.validate(ConvertParams(stride = 0))
     @test_throws ArgumentError TS.validate(ConvertParams(stride_k0 = 0.0))
+    @test_throws ArgumentError TS.validate(ConvertParams(mz_sigma_ns = -1.0))
     p2, _ = TS.parse_cli(["a.d", "out", "--mz-sigma", "2", "--centroid", "none", "--no-sum-scale", "--frames", "1:10", "--format", "both"])
     @test p2.mz_sigma == 2.0 && p2.centroid == :none && !p2.sum_scale && p2.frames == collect(1:10) && p2.format == :both
     @test_throws ErrorException TS.parse_cli(["a.d", "out", "--bogus", "1"])
@@ -225,6 +227,26 @@ end
     @test p3.stride_k0 == 0.013 && p3.im_sigma_k0 == 0.005 && p3.stride === nothing
     p4, _ = TS.parse_cli(["a.d", "out", "--stride", "8", "--im-sigma", "5"])
     @test p4.stride == 8 && p4.im_sigma == 5.0
+    p5, _ = TS.parse_cli(["a.d", "out", "--mz-sigma-ns", "0.3"])
+    @test p5.mz_sigma_ns == 0.3 && p5.mz_sigma === nothing
+end
+
+@testset "m/z scale from ns (resolve_mz_scale)" begin
+    res(timebase; kw...) = TS.resolve_mz_scale(ConvertParams(; kw...), timebase)
+    # mz_sigma = 0.28125 ns / timebase to 0.01 bin; max_half = max(4, ceil(4 sigma))
+    for (timebase, sigma, max_half) in ((0.125, 2.25, 9),    # timsTOF Ultra / Ultra 2
+                                        (0.2, 1.41, 6),      # timsTOF Pro (1.40625 -> 1.41)
+                                        (0.5, 0.56, 4))      # a coarse digitizer: max_half floor 4
+        p = res(timebase)
+        @test p.mz_sigma == sigma && p.max_half == max_half
+    end
+    # explicit values (bins) override; an explicit max_half is kept
+    @test res(0.2; mz_sigma = 3.0).mz_sigma == 3.0 && res(0.2; mz_sigma = 3.0).max_half == 12
+    @test res(0.125; max_half = 20).max_half == 20 && res(0.125; max_half = 20).mz_sigma == 2.25
+    @test res(0.125; mz_sigma_ns = 0.375).mz_sigma == 3.0
+    # a missing timebase is an error only when the sigma has to be derived from it
+    @test_throws ArgumentError res(0.0)
+    @test res(0.0; mz_sigma = 3.0).mz_sigma == 3.0
 end
 
 @testset "IM scale from 1/K0 (resolve_im_scale)" begin

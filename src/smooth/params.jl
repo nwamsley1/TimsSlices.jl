@@ -21,6 +21,10 @@
 # peak is a physical width in 1/K0 while the number of scans it spans depends on the method's TIMS ramp (1/K0 range
 # / number of scans). Each run's scan counts are derived once, from its own 1/K0-per-scan slope, by
 # `resolve_im_scale`; an explicit `stride` / `im_sigma` (in scans) overrides the derivation.
+#
+# The m/z kernel width is set in nanoseconds of flight time for the same reason: a TOF bin is one digitizer sample,
+# whose length differs between instruments (0.125 ns on timsTOF Ultra / Ultra 2, 0.2 ns on timsTOF Pro), while the
+# scatter it has to absorb is a physical time. `resolve_mz_scale` converts it with the run's `DigitizerTimebase`.
 
 """
 Default slice spacing in 1/K0. Converted per run to `ceil(STRIDE_K0 / (1/K0 per scan))` scans, rounded UP so slices
@@ -36,6 +40,20 @@ Converted per run to `IM_SIGMA_K0 / (1/K0 per scan)` scans and rounded to 0.01 s
 sigma; the rounding only makes the validated ramps reproduce exactly: 0.81/936 per scan gives 4.998 -> 5.00).
 """
 const IM_SIGMA_K0 = 0.004325
+
+"""
+Default m/z Gaussian sigma in nanoseconds of flight time: 2.25 bins at the 0.125 ns timebase of the timsTOF Ultra /
+Ultra 2, 1.41 bins at the 0.2 ns of the timsTOF Pro. Converted per run to `MZ_SIGMA_NS / DigitizerTimebase` bins,
+rounded to 0.01 bin.
+
+Why this value: Bruker stores one centroid per ion per IM scan, and an ion's centroid wanders between scans; the
+kernel merges that scatter into one peak. Measured on isolated MS2 ions (2026-09-24): the scatter is ~1.5 bins
+(0.19 ns) on the Ultra files and ~1.1 bins (0.22 ns) on a timsTOF Pro file, i.e. constant in time, not in bins, and
+nearly flat across m/z (constant ppm would need it to grow as sqrt(m/z)). Within one scan the instrument never
+stores two centroids closer than ~5 bins, so a sigma above ~2.5 bins merges ions it had separated. Searches on the
+Ultra files: 2.25 bins beat the previous 3 bins (E. coli 50 ng +0.8% / +1.8% precursors at 1% / 0.1% FDR).
+"""
+const MZ_SIGMA_NS = 0.28125
 
 "Parameters of the smoothing pipeline for one MS level."
 struct LevelParams
@@ -61,10 +79,12 @@ Base.@kwdef struct ConvertParams
     ms1_im_sigma::Union{Nothing, Float64} = im_sigma
     kernel_extent::Float64 = 3.0
     sum_scale::Bool = true
-    # m/z kernel + centroid
-    mz_sigma::Float64 = 3.0
+    # m/z kernel + centroid: sigma target in ns of flight time, converted to bins per run (resolve_mz_scale).
+    # `mz_sigma` (bins), when given, overrides it; `max_half` (bins) defaults to max(4, 4 * mz_sigma).
+    mz_sigma_ns::Float64 = MZ_SIGMA_NS
+    mz_sigma::Union{Nothing, Float64} = nothing
     centroid::Symbol = :wmean
-    max_half::Int = max(4, ceil(Int, 4 * mz_sigma))
+    max_half::Union{Nothing, Int} = nothing
     # culls
     min_scans::Int = 1
     max_peaks::Int = 1500            # per slice, MS2: keep the N most intense centroids (0 = off)
@@ -109,16 +129,36 @@ function resolve_im_scale(p::ConvertParams, k0_per_scan::Real)
                                    im_sigma = im_sigma, ms1_im_sigma = something(p.ms1_im_sigma, im_sigma)))...)
 end
 
-"Check `p`. The IM scale may still be unresolved (`nothing`); `resolve_im_scale` fills it in per run."
+"""
+    resolve_mz_scale(p, timebase_ns) -> ConvertParams
+
+`p` with `mz_sigma` in bins, from `mz_sigma_ns` and the run's digitizer timebase (ns per TOF bin), to 0.01 bin, and
+`max_half` = `max(4, ceil(4 mz_sigma))`. Fields already set are kept (explicit overrides).
+
+Examples (default 0.28125 ns): 0.125 ns per bin (timsTOF Ultra / Ultra 2) -> 2.25 bins, max_half 9; 0.2 ns
+(timsTOF Pro) -> 1.41 bins, max_half 6.
+"""
+function resolve_mz_scale(p::ConvertParams, timebase_ns::Real)
+    t = Float64(timebase_ns)
+    p.mz_sigma === nothing && !(isfinite(t) && t > 0) &&
+        throw(ArgumentError("cannot derive the m/z sigma: digitizer timebase is $timebase_ns ns; set mz_sigma explicitly"))
+    mz_sigma = something(p.mz_sigma, round(p.mz_sigma_ns / t; digits = 2))
+    max_half = something(p.max_half, max(4, ceil(Int, 4 * mz_sigma)))
+    fields = NamedTuple{fieldnames(ConvertParams)}(Tuple(getfield(p, k) for k in fieldnames(ConvertParams)))
+    ConvertParams(; merge(fields, (mz_sigma = mz_sigma, max_half = max_half))...)
+end
+
+"Check `p`. The IM and m/z scales may still be unresolved (`nothing`); `resolve_im_scale` / `resolve_mz_scale` fill them in per run."
 function validate(p::ConvertParams)
     p.stride_k0 > 0 || throw(ArgumentError("stride_k0 must be > 0"))
     p.im_sigma_k0 >= 0 || throw(ArgumentError("im_sigma_k0 must be >= 0"))
     all(x -> x === nothing || x >= 0, (p.im_sigma, p.ms1_im_sigma)) || throw(ArgumentError("im_sigma must be >= 0"))
     p.kernel_extent > 0 || throw(ArgumentError("kernel_extent must be > 0"))
     all(x -> x === nothing || x >= 1, (p.stride, p.ms1_stride)) || throw(ArgumentError("stride must be >= 1"))
-    p.mz_sigma >= 0 || throw(ArgumentError("mz_sigma must be >= 0"))
+    p.mz_sigma_ns >= 0 || throw(ArgumentError("mz_sigma_ns must be >= 0"))
+    p.mz_sigma === nothing || p.mz_sigma >= 0 || throw(ArgumentError("mz_sigma must be >= 0"))
     p.centroid in (:wmean, :gauss, :none) || throw(ArgumentError("centroid must be :wmean, :gauss or :none"))
-    p.max_half >= 1 || throw(ArgumentError("max_half must be >= 1"))
+    p.max_half === nothing || p.max_half >= 1 || throw(ArgumentError("max_half must be >= 1"))
     p.min_scans >= 1 || throw(ArgumentError("min_scans must be >= 1"))
     p.max_peaks >= 0 && p.ms1_max_peaks >= 0 || throw(ArgumentError("max_peaks must be >= 0"))
     p.bin_scale >= 1 || throw(ArgumentError("bin_scale must be >= 1"))
@@ -128,7 +168,7 @@ function validate(p::ConvertParams)
     p
 end
 
-# `p` must be resolved (resolve_im_scale): the IM fields are converted to concrete Float64 / Int here.
+# `p` must be resolved (resolve_im_scale, resolve_mz_scale): the scale fields are converted to concrete Float64 / Int here.
 level_params(p::ConvertParams, ms1::Bool) = ms1 ?
     LevelParams(p.ms1_im_sigma, p.kernel_extent, p.ms1_stride, p.sum_scale, p.mz_sigma, p.centroid, p.max_half, p.min_scans, p.ms1_max_peaks) :
     LevelParams(p.im_sigma, p.kernel_extent, p.stride, p.sum_scale, p.mz_sigma, p.centroid, p.max_half, p.min_scans, p.max_peaks)
