@@ -42,18 +42,21 @@ sigma; the rounding only makes the validated ramps reproduce exactly: 0.81/936 p
 const IM_SIGMA_K0 = 0.004325
 
 """
-Default m/z Gaussian sigma in nanoseconds of flight time: 2.25 bins at the 0.125 ns timebase of the timsTOF Ultra /
-Ultra 2, 1.41 bins at the 0.2 ns of the timsTOF Pro. Converted per run to `MZ_SIGMA_NS / DigitizerTimebase` bins,
+Default m/z Gaussian sigma in nanoseconds of flight time: 2.5 bins at the 0.125 ns timebase of the timsTOF Ultra /
+Ultra 2, 1.56 bins at the 0.2 ns of the timsTOF Pro. Converted per run to `MZ_SIGMA_NS / DigitizerTimebase` bins,
 rounded to 0.01 bin.
 
 Why this value: Bruker stores one centroid per ion per IM scan, and an ion's centroid wanders between scans; the
 kernel merges that scatter into one peak. Measured on isolated MS2 ions (2026-09-24): the scatter is ~1.5 bins
 (0.19 ns) on the Ultra files and ~1.1 bins (0.22 ns) on a timsTOF Pro file, i.e. constant in time, not in bins, and
 nearly flat across m/z (constant ppm would need it to grow as sqrt(m/z)). Within one scan the instrument never
-stores two centroids closer than ~5 bins, so a sigma above ~2.5 bins merges ions it had separated. Searches on the
-Ultra files: 2.25 bins beat the previous 3 bins (E. coli 50 ng +0.8% / +1.8% precursors at 1% / 0.1% FDR).
+stores two centroids closer than ~5 bins, so a sigma above ~2.5 bins merges ions it had separated. Searches
+(precursors at 1% / 0.1% FDR vs the previous fixed 3 bins), 0.28-0.375 ns swept on four files: the per-run ns
+scaling is the robust gain (timsTOF Pro HeLa +7..12% at 1% FDR at every value); on the Ultra files the value moves
+IDs within ~+/-2% at 1% FDR. 0.3125 ns has the best worst case: E. coli 50 ng -0.8 / -1.8%, human 50 ng +0.5 / +0.1%,
+human 250 pg -0.4 / +2.4%, Pro HeLa +11.7 / +2.9% (0.28125 ns: 250 pg -2.1 / -17%).
 """
-const MZ_SIGMA_NS = 0.28125
+const MZ_SIGMA_NS = 0.3125
 
 "Parameters of the smoothing pipeline for one MS level."
 struct LevelParams
@@ -135,8 +138,8 @@ end
 `p` with `mz_sigma` in bins, from `mz_sigma_ns` and the run's digitizer timebase (ns per TOF bin), to 0.01 bin, and
 `max_half` = `max(4, ceil(4 mz_sigma))`. Fields already set are kept (explicit overrides).
 
-Examples (default 0.28125 ns): 0.125 ns per bin (timsTOF Ultra / Ultra 2) -> 2.25 bins, max_half 9; 0.2 ns
-(timsTOF Pro) -> 1.41 bins, max_half 6.
+Examples (default 0.3125 ns): 0.125 ns per bin (timsTOF Ultra / Ultra 2) -> 2.5 bins, max_half 10; 0.2 ns
+(timsTOF Pro) -> 1.56 bins, max_half 7.
 """
 function resolve_mz_scale(p::ConvertParams, timebase_ns::Real)
     t = Float64(timebase_ns)

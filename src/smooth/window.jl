@@ -25,7 +25,7 @@
 #   1. IM accumulation (im.jl)    Gaussian-weighted sum of the raw scans around the slice centre, per TOF bin
 #                                 (sigma 0.004325 1/K0, 5 scans on the Ultra ramps): the ion's signal over its
 #                                 mobility peak, in one spectrum.
-#   2. m/z smoothing (mz.jl)      Gaussian along the TOF axis (sigma 0.28125 ns = 2.25 bins on the Ultra): merges
+#   2. m/z smoothing (mz.jl)      Gaussian along the TOF axis (sigma 0.3125 ns = 2.5 bins on the Ultra): merges
 #                                 the +/-1-2 bin jitter of an ion across scans into one hump.
 #   3. peak picking (centroid.jl) local maxima, footprint walk, weighted-mean position, footprint-sum intensity,
 #                                 `min_scans` cull.

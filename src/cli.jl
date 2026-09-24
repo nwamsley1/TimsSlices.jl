@@ -27,8 +27,8 @@ Options (defaults in brackets):
                              per run (stride rounded up)
   --stride K  --ms1-stride K  --im-sigma S  --ms1-im-sigma S   override in scans (default: derived as above)
   --kernel-extent E [3]  --no-sum-scale
-  --mz-sigma-ns X [0.28125]   m/z kernel sigma in ns of flight time, converted to TOF bins per run
-  --mz-sigma S                override in bins (default: derived as above; 2.25 on timsTOF Ultra, 1.41 on Pro)
+  --mz-sigma-ns X [0.3125]    m/z kernel sigma in ns of flight time, converted to TOF bins per run
+  --mz-sigma S                override in bins (default: derived as above; 2.5 on timsTOF Ultra, 1.56 on Pro)
   --centroid wmean|gauss|none [wmean]  --max-half H [max(4, 4*mz-sigma)]
   --min-scans N [1]
   --max-peaks N [1500, 0 = off]  --ms1-max-peaks N [0]   keep the N most intense centroids per slice

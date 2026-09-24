@@ -16,7 +16,7 @@ slices every `stride_k0` = 0.0065 1/K0 (rounded up to whole scans) with an IM Ga
 sigma 4 on a 0.60-1.60 timsTOF Pro ramp. `stride` / `im_sigma` (scans) override the conversion.
 
 The m/z kernel is set in nanoseconds of flight time and converted to TOF bins per run with the run's digitizer
-timebase: `mz_sigma_ns` = 0.28125 ns, i.e. 2.25 bins on the timsTOF Ultra / Ultra 2 (0.125 ns per bin) and 1.41
+timebase: `mz_sigma_ns` = 0.3125 ns, i.e. 2.5 bins on the timsTOF Ultra / Ultra 2 (0.125 ns per bin) and 1.56
 bins on the timsTOF Pro (0.2 ns). `mz_sigma` (bins) overrides the conversion.
 
 Pipeline per frame: decode the raw block (zstd, byte planes, per-scan prefix sums) → for every window and every

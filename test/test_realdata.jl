@@ -150,8 +150,8 @@ end
     # IM scale derived from this timsTOF Pro run's ramp (0.60-1.60 over 927 scans): 7 scans, sigma ~4.01
     @test t.meta["params"]["stride"] == 7 && t.meta["params"]["im_sigma"] == 4.01
     @test t.meta["stride_explicit"] == false && t.meta["im_sigma_explicit"] == false
-    # m/z sigma from this timsTOF Pro run's 0.2 ns digitizer: 0.28125 ns -> 1.41 bins
-    @test t.meta["params"]["mz_sigma"] == 1.41 && t.meta["params"]["max_half"] == 6
+    # m/z sigma from this timsTOF Pro run's 0.2 ns digitizer: 0.3125 ns -> 1.56 bins
+    @test t.meta["params"]["mz_sigma"] == 1.56 && t.meta["params"]["max_half"] == 7
     @test t.meta["digitizer_timebase_ns"] ≈ 0.2 && t.meta["mz_sigma_explicit"] == false
     @test t.frames.ms_order[1] == 0x01 && t.frames.cycle_idx[1] == 1 && t.frames.cycle_idx[10] == 2
     # slices table consistent with frames table and blocks
