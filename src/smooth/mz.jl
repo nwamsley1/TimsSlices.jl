@@ -51,27 +51,26 @@ centroid_slice!(out::FrameSlices, sc::SmoothScratch, lp::LevelParams, kmz::Vecto
     centroid_slice!(out, sc, lp, MzKernels(kmz, lp.max_half))
 
 """
-m/z kernels by TOF bin. A fixed `mz_sigma` (bins) is the one-kernel case. With a sigma constant in ppm the width in
-bins grows with the bin: `mz = (a + b t)^2`, so `d mz / d t = 2b (a + b t)` and
-`sigma_bins(t) = sigma_ppm 1e-6 mz / (d mz / d t) = c0 + c1 t` with `c0 = sigma_ppm 1e-6 a / 2b`,
-`c1 = sigma_ppm 1e-6 / 2`. Kernels are precomputed on a 0.1-bin sigma grid; `max_half` scales as `max(4, 4 sigma)`.
+m/z kernels by TOF bin. A fixed `mz_sigma` (bins) is the one-kernel case. Otherwise the width in bins follows
+`sigma_bins = mz_sigma (mz / ref_mz)^alpha`, with `mz = (a + b t)^2` from the run's calibration. One TOF bin is
+`2b sqrt(mz)` Da, so alpha = 0 is constant in bins, 0.5 constant in ppm, -0.5 constant in mDa. The kernel is looked
+up per 256-bin block (sigma changes < 0.1% within one), sigma on a 0.01-bin grid; `max_half` = `max(4, 4 sigma)`.
 """
 struct MzKernels
     ks::Vector{Vector{Float64}}
     max_half::Vector{Int}
-    c0::Float64
-    c1::Float64
-    q_lo::Int                        # grid index of ks[1] (sigma = q / 10 bins)
+    kidx::Vector{Int32}              # kernel index per 256-bin block; empty = the single kernel
 end
-MzKernels(kmz::Vector{Float64}, max_half::Int) = MzKernels([kmz], [max_half], 0.0, 0.0, 0)
-function MzKernels(sigma_ppm::Real, cal::LinearMzCal, nbins::Integer, extent::Real)
-    c0 = sigma_ppm * 1e-6 * cal.intercept / (2cal.slope); c1 = sigma_ppm * 1e-6 / 2
-    q_lo = max(1, round(Int, 10 * (c0 + c1 * 0))); q_hi = max(q_lo, round(Int, 10 * (c0 + c1 * nbins)))
-    MzKernels([gauss_kernel(q / 10, extent) for q in q_lo:q_hi], [max(4, ceil(Int, 4 * q / 10)) for q in q_lo:q_hi],
-              c0, c1, q_lo)
+MzKernels(kmz::Vector{Float64}, max_half::Int) = MzKernels([kmz], [max_half], Int32[])
+function MzKernels(sigma0::Real, alpha::Real, ref_mz::Real, cal::LinearMzCal, nbins::Integer, extent::Real)
+    sig(t) = sigma0 * ((cal.intercept + cal.slope * t)^2 / ref_mz)^alpha
+    q = [max(1, round(Int, 100 * sig(256k + 128))) for k in 0:(nbins >> 8)]
+    qs = sort!(unique(q)); pos = Dict(v => i for (i, v) in enumerate(qs))
+    MzKernels([gauss_kernel(v / 100, extent) for v in qs], [max(4, ceil(Int, 4v / 100)) for v in qs],
+              Int32[pos[v] for v in q])
 end
 @inline mz_kernel_index(mk::MzKernels, bin) =
-    clamp(round(Int, 10 * (mk.c0 + mk.c1 * bin)) - mk.q_lo + 1, 1, length(mk.ks))
+    isempty(mk.kidx) ? 1 : Int(mk.kidx[min(length(mk.kidx), (Int(bin) >> 8) + 1)])
 
 function centroid_slice!(out::FrameSlices, sc::SmoothScratch, lp::LevelParams, mk::MzKernels)
     bins = sc.sp_bin; vals = sc.sp_val; cnts = sc.sp_cnt

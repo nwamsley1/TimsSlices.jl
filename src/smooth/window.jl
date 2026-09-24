@@ -48,11 +48,11 @@ function LevelSetup(lp::LevelParams)
     kim = im_kernel(lp); kmz = mz_kernel(lp)
     LevelSetup(lp, kim, kmz, length(kim) ÷ 2, length(kmz) ÷ 2, MzKernels(kmz, lp.max_half))
 end
-"With `mz_sigma_ppm > 0`, the m/z kernel is constant in ppm: its width in bins is looked up per TOF bin (`MzKernels`)."
-function LevelSetup(lp::LevelParams, mz_sigma_ppm::Real, cal::LinearMzCal, nbins::Integer)
+"With `mz_sigma_alpha != 0`, the m/z kernel width varies with m/z (`MzKernels`)."
+function LevelSetup(lp::LevelParams, alpha::Real, ref_mz::Real, cal::LinearMzCal, nbins::Integer)
     ls = LevelSetup(lp)
-    mz_sigma_ppm > 0 || return ls
-    LevelSetup(ls.lp, ls.kim, ls.kmz, ls.h_im, ls.h_mz, MzKernels(mz_sigma_ppm, cal, nbins, lp.kernel_extent))
+    alpha == 0 && return ls
+    LevelSetup(ls.lp, ls.kim, ls.kmz, ls.h_im, ls.h_mz, MzKernels(lp.mz_sigma, alpha, ref_mz, cal, nbins, lp.kernel_extent))
 end
 
 """
