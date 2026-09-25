@@ -76,8 +76,9 @@ function convert(dir::AbstractString, out_dir::AbstractString; params::ConvertPa
     validate(params)
     t_start = time()
     f = open_tdf(dir)
-    # IM scale in scans for this run's ramp (stride / sigma targets are in 1/K0 unless set explicitly)
-    p = validate(resolve_im_scale(params, f.im_cal.slope))
+    # IM scale in scans for this run's ramp (stride / sigma targets are in 1/K0 unless set explicitly); m/z sigma in
+    # bins for this run's digitizer (target in ns unless set explicitly)
+    p = validate(resolve_mz_scale(resolve_im_scale(params, f.im_cal.slope), f.timebase_ns))
     name === nothing && (name = output_name(dir, p))
     rows = p.frames === nothing ? valid_frames(f) : sort(p.frames)
     all(i -> 1 <= i <= n_frames(f) && (is_ms1(f, i) || is_dia(f, i)), rows) || throw(ArgumentError("frames must be rows of MS1 / diaPASEF frames"))
@@ -87,6 +88,8 @@ function convert(dir::AbstractString, out_dir::AbstractString; params::ConvertPa
     @printf(log, "IM scale: %.6f 1/K0 per scan -> stride %d scans (%s), IM sigma %.2f scans (%s)\n", abs(f.im_cal.slope),
             p.stride, params.stride === nothing ? "from $(p.stride_k0) 1/K0, rounded up" : "set explicitly",
             p.im_sigma, params.im_sigma === nothing ? "from $(p.im_sigma_k0) 1/K0" : "set explicitly")
+    @printf(log, "m/z scale: %.4f ns per TOF bin -> m/z sigma %.2f bins (%s)\n", f.timebase_ns, p.mz_sigma,
+            params.mz_sigma === nothing ? "from $(p.mz_sigma_ns) ns" : "set explicitly")
     @printf(log, "params %s\n", string(Dict(p)))
 
     mz_lo = parse(Float64, f.meta["MzAcqRangeLower"]); mz_hi = parse(Float64, f.meta["MzAcqRangeUpper"])
@@ -99,6 +102,7 @@ function convert(dir::AbstractString, out_dir::AbstractString; params::ConvertPa
         "OneOverK0AcqRangeLower" => f.meta["OneOverK0AcqRangeLower"], "OneOverK0AcqRangeUpper" => f.meta["OneOverK0AcqRangeUpper"],
         "params" => Dict(p),
         "stride_explicit" => params.stride !== nothing, "im_sigma_explicit" => params.im_sigma !== nothing,
+        "mz_sigma_explicit" => params.mz_sigma !== nothing, "digitizer_timebase_ns" => f.timebase_ns,
         "bin_scale" => p.bin_scale, "int_scale" => p.int_scale, "zstd_level" => p.zstd_level,
         "converter" => "TimsSlices.jl $(pkgversion(TimsSlices))", "converted_at" => string(now_utc()))
     mkpath(out_dir)

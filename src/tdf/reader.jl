@@ -25,6 +25,7 @@ struct TdfFile
     dia::DiaScheme
     mz_cal::LinearMzCal
     mz_cal_resid_ppm::Vector{Float64}
+    timebase_ns::Float64        # digitizer sample length = one TOF bin (MzCalibration.DigitizerTimebase)
     im_cal::LinearImCal
     ce_ramp::CeRamp
     bin::IOStream               # analysis.tdf_bin (positioned reads; the stream position is never used)
@@ -42,13 +43,14 @@ function open_tdf(dir::AbstractString)
     dia = read_dia_scheme(db, frames)
     mzcal_id = isempty(frames.mz_calibration) ? 1 : Int(frames.mz_calibration[1])
     cal, resid = regressed_mz_cal(db, mzcal_id)
+    timebase = Float64(first(DBInterface.execute(db, "SELECT DigitizerTimebase FROM MzCalibration WHERE Id=$mzcal_id"))[:DigitizerTimebase])
     imcal = boundary_im_cal(meta, frames)
     ce = fit_ce_ramp(dia)
     close(db)
     compression = parse(Int, get(meta, "TimsCompressionType", "2"))
     compression == 2 || error("only TimsCompressionType 2 is supported (file has $compression)")
     bin = open(joinpath(dir, "analysis.tdf_bin"), "r")
-    TdfFile(String(dir), meta, frames, dia, cal, resid, imcal, ce, bin, filesize(bin), compression,
+    TdfFile(String(dir), meta, frames, dia, cal, resid, timebase, imcal, ce, bin, filesize(bin), compression,
             isempty(frames.num_scans) ? 0 : Int(maximum(frames.num_scans)),
             isempty(frames.num_peaks) ? 0 : Int(maximum(frames.num_peaks)))
 end

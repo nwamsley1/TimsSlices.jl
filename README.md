@@ -15,6 +15,10 @@ slices every `stride_k0` = 0.0065 1/K0 (rounded up to whole scans) with an IM Ga
 1/K0, i.e. 8 scans and sigma 5 scans on the timsTOF Ultra ramps (1/K0 0.64-1.45 over ~940 scans), 7 scans and
 sigma 4 on a 0.60-1.60 timsTOF Pro ramp. `stride` / `im_sigma` (scans) override the conversion.
 
+The m/z kernel is set in nanoseconds of flight time and converted to TOF bins per run with the run's digitizer
+timebase: `mz_sigma_ns` = 0.3125 ns, i.e. 2.5 bins on the timsTOF Ultra / Ultra 2 (0.125 ns per bin) and 1.56
+bins on the timsTOF Pro (0.2 ns). `mz_sigma` (bins) overrides the conversion.
+
 Pipeline per frame: decode the raw block (zstd, byte planes, per-scan prefix sums) → for every window and every
 `stride`-th IM scan, accumulate a Gaussian (`im_sigma` scans) over the scans in reach per TOF bin → Gaussian
 (`mz_sigma` bins) along the TOF axis over runs of nearby bins → local maxima with a footprint walk
